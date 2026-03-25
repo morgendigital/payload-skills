@@ -87,8 +87,25 @@ Damit der CMS-Link-Typ **`block`** und die Anker-Picker im Admin dieselben IDs n
 
 **Datei:** `src/fields/link/BlockAnchorField.tsx`
 
+### Payload 3 Admin: „Section on this page“ – Layout aus dem Formular lesen
+
+**Wichtig:** Bei einem **Blocks**-Feld (z. B. `layout`) ist `fields.layout.value` im Admin oft **nicht** das serialisierte Block-Array, sondern z. B. nur die **Anzahl der Zeilen** oder sonst nicht für Anker-Auflösung geeignet. Die zuverlässige Quelle ist:
+
+- `fields.layout.rows` – je Eintrag u. a. `id`, `blockType`
+- Feldwerte der jeweiligen Zeile über Punktpfade: `layout.0.showInNav`, `layout.0.navLabel`, `layout.0.anchorId`, `layout.0.blockName`, …
+
+Für ein Custom Field wie `BlockAnchorField` sollte die Optionenliste daher mit **`useFormFields`** den gesamten **`FormState`** (erster Eintrag des Kontext-Tupels) lesen und daraus ein minimales Layout-Array zusammenbauen – analog zu `buildPageLayoutFromFormState(formState, 'layout')`, statt `fields.layout?.value` als `Page['layout']` zu interpretieren.
+
+**„Section on another page“** bleibt unverändert sinnvoll per **`GET /api/pages/:id`** (gespeichertes Dokument), weil dort `layout` als echtes Array zurückkommt (vgl. Abschnitt 4).
+
+### Admin-UI für Sektions-Dropdown
+
+Statt eines nativen HTML-`<select>` sollte **`SelectInput`** aus `@payloadcms/ui/fields/Select` verwendet werden, damit Styling und Verhalten dem Payload-Admin entsprechen.
+
+---
+
 - Liest das **aktuelle Page-Layout** aus Formular-State oder gespeicherter `data` (gleiche `layout`-Reihenfolge wie live).
-- Baut dieselbe Liste mit `getResolvedBlockAnchorItems` und zeigt ein **Select**; gespeicherter Wert ist der String `anchorId` (z. B. `hero-1`, `page-footer`).
+- Baut dieselbe Liste mit `getResolvedBlockAnchorItems` und zeigt die Auswahl über **`SelectInput`**; gespeicherter Wert ist der String `anchorId` (z. B. `hero-1`, `page-footer`).
 - Zusätzliche Option **`page-footer`**: feste ID für den Seitenfuß; im Frontend setzt **`src/Footer/Component.tsx`** `id="page-footer"` auf `<footer>`.
 
 Damit sind CMS-Auswahl und gerenderte `id` **1:1** gekoppelt — keine manuelle Eingabe der Hash-Zeichenkette nötig.
@@ -118,7 +135,7 @@ Wie `block`, aber die Zielseite ist eine **andere** `pages`-Dokument-Relationshi
 **Datei:** `src/fields/link/BlockAnchorForPageField.tsx`
 
 - Liest die gewählte Page-ID aus dem Formular (Sibling-Feld zur Reference).
-- Lädt per **`fetch('/api/pages/{id}?depth=0&locale=…')`** das Dokument und verwendet **`doc.layout`**.
+- Lädt per **`fetch('/api/pages/{id}?depth=0&locale=…')`** das Dokument und verwendet **`doc.layout`**. Das ist hier die passende Quelle, weil die API das **persistierte** Dokument liefert und `layout` damit zuverlässig als **Block-Array** vorliegt (im Unterschied zum Blocks-Feld im Bearbeitungsformular der **aktuellen** Seite; siehe Abschnitt 3).
 - Optionsliste wieder über `getResolvedBlockAnchorItems(layout)` — dieselben `anchorId`-Strings wie auf der Zielseite gerendert werden.
 - Auch hier Option **`page-footer`**, falls der Footer auf der Zielseite dieselbe `id` hat.
 
@@ -231,7 +248,7 @@ Relative interne Pfade (`/` am Anfang, kein reiner Hash, kein `https://` / `mail
 | Baustein                      | Tragfähigkeit      | Hinweis für Greenfield                                                                                                                                                                                                              |
 | ----------------------------- | ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `link()` / `linkGroup()`      | ✅                 | `relationTo: ['pages', 'posts']` und Feldnamen `link.*` sind im Code **fest** — Collection-Slugs oder `layout`-Feldnamen anders → `link.ts` + Types + `CMSLink` anpassen.                                                           |
-| `BlockAnchorField`            | ✅                 | Liest `layout` aus **derselben Page**, die im Admin bearbeitet wird; nutzt `getLayoutFromFieldMap` für Payload-Form-Pfade. Neues Projekt braucht ein **blocks-Array auf der Page** (oder du mapst die Utility auf euren Feldnamen). |
+| `BlockAnchorField`            | ✅                 | Liest `layout` aus **derselben Page**, die im Admin bearbeitet wird; in Payload 3 den **FormState** nutzen (`rows`, Punktpfade, ggf. `buildPageLayoutFromFormState`), nicht `fields.layout.value` als vollständiges Block-Array (siehe Abschnitt 3). Neues Projekt braucht ein **blocks-Array auf der Page** (oder du mapst die Utility auf euren Feldnamen). |
 | `BlockAnchorForPageField`     | ✅, aber gekoppelt | Fetch: **`/api/pages/${id}?depth=0&locale=…`** — Collection muss **`slug: 'pages'`** heißen (oder URL in der Datei ändern). `doc.layout` muss die **gleiche Block-Struktur** haben wie im Frontend.                                 |
 | `getResolvedBlockAnchorItems` | ✅                 | Importiert `Page` aus **`payload-types`** — im Zielprojekt Types neu erzeugen; Block-Interface muss `blockType`, `id`, optional Nav-Felder tragen.                                                                                  |
 | `RenderBlocks`                | ✅ Muster          | Beliebiges Layout: solange du **`getResolvedBlockAnchorItems` + `id` auf Wrapper** einhältst, stimmen Picker und DOM überein.                                                                                                       |
@@ -252,7 +269,7 @@ Relative interne Pfade (`/` am Anfang, kein reiner Hash, kein `https://` / `mail
 
 - **Next.js** (App Router) für `CMSLink` unverändert; anderes Framework → Link-Komponente und Router-Hooks ersetzen.
 - **`payload generate:importmap`** nach Einbinden der Custom Field-Pfade unter `admin.components` / Feld `components.Field`.
-- **Layouts:** Page-Dokument mit **`layout`** (oder umbenennen und `sectionAnchors` + Field-Resolver anpassen — `BlockAnchorField`’s `getLayoutFromFieldMap` sucht explizit nach `layout`).
+- **Layouts:** Page-Dokument mit **`layout`** (oder umbenennen und `sectionAnchors` + Field-Resolver anpassen — Resolver/Helper für dasselbe Feld im Form-State, vgl. Abschnitt 3).
 
 ### Bekannte Doppelstellen beim Port
 
