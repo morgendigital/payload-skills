@@ -23,6 +23,7 @@ Für **jede** öffentliche Basis-URL der App (lokal, Preview, Production) diesel
 | 5 | Web origins (falls gefragt) | `ORIGIN` oder `+` je nach Keycloak-Version / Policy |
 | 6 | Client authentication | Für confidential: Secret generieren → in `.env` als `KEYCLOAK_*_CLIENT_SECRET` |
 | 7 | App `.env` | `NEXT_PUBLIC_SERVER_URL` = **dieselbe** `ORIGIN` wie im Browser; `KEYCLOAK_ISSUER` = Issuer aus Schritt 1 |
+| — | **providerId / Callback-Segment** | Letztes Segment von `…/oauth2/callback/<providerId>` = **derselbe** String wie in Better Auth (Server + Client), z. B. zentral in `keycloakProviders.ts` gepflegt. **Nicht** automatisch `keycloak` annehmen, wenn ihr den Brandportal-Stil mit eigener CMS-Client-ID (z. B. `brandportal-cms`) nutzt — dann muss überall **dieselbe** ID stehen (Callback, `providerId`, ggf. Logout, siehe unten). |
 
 **Wichtig**
 
@@ -65,9 +66,50 @@ Der **Kurzüberblick**, das **Sequenzdiagramm** und die **Strategy-Beschreibung*
 ## Technische Bausteine (gemeinsam)
 
 - **Better Auth** mit `genericOAuth`, Sessions/Accounts in **derselben MongoDB** wie Payload (eigener Adapter).
-- **Next.js:** Route `GET`/`POST` = `auth.handler` unter `basePath` `/api/auth` (ohne `nextCookies()`, wenn ihr Rtbrick/Brandportal-Verhalten wollt).
+- **Next.js:** Route `GET`/`POST` = `auth.handler` unter `basePath` `/api/auth` (ohne `nextCookies()`, wenn ihr Rtbrick/Brandportal-Verhalten wollt). Bei **`(payload)/api/[...slug]`** zusätzlich Abschnitt **Next.js + Payload 3 (Catch-All)** beachten.
 - **Payload:** `users` mit `auth.strategies: [betterAuthStrategy]`; lokales Passwort je nach Variante deaktiviert oder optional.
 - **Client:** `createAuthClient` + `genericOAuthClient`; `providerId` wie auf dem Server.
+
+---
+
+## Next.js + Payload 3 (Catch-All)
+
+Für das **zentrale Playbook** (neues Projekt): Wenn Payload mit einem **Catch-All** unter `app/(payload)/api/...` läuft, sind Auth-Routing, Handler-Export und Brandportal-nahe Better-Auth-Settings explizit festzuhalten — sonst scheitern OAuth-Callbacks oder Logout still mit **404** / falscher `client_id`.
+
+### Routing
+
+- Gibt es eine Route wie **`src/app/(payload)/api/[...slug]/route.ts`**, fangen diese Handler **alle** `/api/…`-Requests ab, für die keine **spezifischere** App-Route existiert.
+- Dann landen Requests zu **`/api/auth/...`** (Better Auth) bei Payload → typischerweise **404**.
+- **Abhilfe:** eine **spezifischere** Route anlegen, z. B. **`src/app/(payload)/api/auth/[...all]/route.ts`**, damit Next.js `/api/auth/...` dort abhandelt statt im generischen **`api/[...slug]`** (Segment `[...all]` / eurer Next-Version entsprechend).
+
+### Handler (Next.js Route)
+
+- In der Auth-Route dokumentieren, was eure Better-Auth-Version wirklich exportiert — **nicht** nur ein generisches `toNextJsHandler`-Snippet.
+- Üblich: **`auth.handler`** bzw. **`getAuth().handler(request)`** (Request durchreichen, je nach API), damit GET/POST für den OAuth-Flow korrekt an Better Auth gehen.
+
+### Konfiguration (Brandportal-Stil, Better Auth + Keycloak)
+
+- **`basePath`** setzen (z. B. `/api/auth`) und **`baseURL`** zur öffentlichen App-URL **bereinigen** (konsistent zu `NEXT_PUBLIC_SERVER_URL`, keine doppelten Slashes / Abweichungen).
+- **Manuelle OIDC-URLs** (`authorizationUrl`, `tokenUrl`, `userInfoUrl`, ggf. Logout), wenn Discovery oder Issuer nicht zu eurer erreichbaren Basis-URL passen.
+- **`pkce: true`** für den Keycloak-/OAuth-Client.
+- Zentrale Konstante **`KEYCLOAK_CMS_PROVIDER_ID`** (oder projektspezifischer Name) = **`providerId`** des CMS-Providers in Better Auth; dazu Env **`KEYCLOAK_CMS_CLIENT_ID`** / **`KEYCLOAK_CMS_CLIENT_SECRET`**; optional **`KEYCLOAK_AUTH_SERVER_URL`** + **`KEYCLOAK_REALM`** zum Aufbau des Issuers statt einer einzelnen `KEYCLOAK_ISSUER`-Variable.
+- **Mongo-Adapter** für Better Auth: oft **`transaction: false`**, wenn Payload und Better Auth dieselbe MongoDB nutzen und verschachtelte Transaktionen sonst scheitern.
+- Wenn **nur OAuth**: **`emailAndPassword`** und **`cookieCache`** in Better Auth **deaktivieren**, damit kein paralleler Passwort-/Cache-Pfad irritiert.
+
+### Payload `users` (Brandportal-orientiert)
+
+- **`disableLocalStrategy: { enableFields: true, optionalPassword: true }`** statt pauschal nur `true`, wenn Nutzerfelder sichtbar bleiben sollen, lokales Login aber nicht der Hauptweg ist.
+- **`realms`** (und Strategy-Sync) wie in der **`betterAuthStrategy`** beschrieben.
+- Env **`DISABLE_KEYCLOAK_USER_PROVISIONING`** (o. ä.), wo ihr Auto-Provisioning über die Strategy abschaltet — im Playbook nennen, damit Staging/Prod gleich konfiguriert werden.
+
+### Debug
+
+- Optional **`GET /api/auth-redirect-uris`** — nur in **nicht-produktiven** Umgebungen; listiert aus der aktuellen `.env` berechnete Callback-URLs zum Abgleich mit Keycloak **Valid redirect URIs** (sinngemäß auch in `AGENTS.md` zum Pflegen dieser Datei erwähnt).
+
+### Logout: `client_id`
+
+- In der Keycloak-Logout-URL ist **`client_id`** der **echte Keycloak-Client** (meist = Wert aus **`KEYCLOAK_CMS_CLIENT_ID`** / dem konfigurierten CMS-Client).
+- Wenn bei euch die **Client-ID in Keycloak absichtlich gleich** dem OAuth-**`providerId`**-String ist, **dieselbe Konstante** verwenden (z. B. **`KEYCLOAK_CMS_PROVIDER_ID`**) — damit Callback-Pfad, Better Auth und Logout nicht auseinanderlaufen.
 
 ---
 
@@ -87,7 +129,7 @@ new URL('/protocol/openid-connect/logout', issuer)
 ```ts
 const base = issuer.replace(/\/$/, '')
 const url = new URL(`${base}/protocol/openid-connect/logout`)
-url.searchParams.set('client_id', cmsClientId) // z. B. KEYCLOAK_CMS_CLIENT_ID
+url.searchParams.set('client_id', cmsClientId) // Keycloak-Client-ID; ggf. = providerId → eine Konstante (z. B. KEYCLOAK_CMS_PROVIDER_ID) nutzen
 url.searchParams.set('post_logout_redirect_uri', postLogoutRedirectUri)
 ```
 
@@ -522,13 +564,14 @@ Hinweis: Die **Website** prüft hier primär „gibt es eine Better-Auth-Session
 
 - Zuerst **`authClient.signOut()`** (Better-Auth-Session im Browser beenden).
 - Anschließend Redirect zu Keycloak **`…/protocol/openid-connect/logout`** mit **`client_id`** (falls erforderlich) und **`post_logout_redirect_uri`**, gebaut wie im Abschnitt **Logout-URL bauen** und in **`getKeycloakLogoutUrl`**.
+- **`client_id`** muss der **Keycloak-Client** sein, nicht irgendein Platzhalter. Ist die Keycloak-Client-ID **gleich** dem OAuth-**`providerId`**, eine gemeinsame Konstante (z. B. **`KEYCLOAK_CMS_PROVIDER_ID`**) mit **`KEYCLOAK_CMS_CLIENT_ID`** teilen — siehe **Next.js + Payload 3 (Catch-All) → Logout: `client_id`**.
 
 ## Replikation: Checkliste neues Projekt
 
 1. Keycloak-Client(s) + **Redirect-URIs** + **Post-Logout-URIs** wie in der Schnellstart-Tabelle (`ORIGIN`, `providerId`).
 2. `.env` setzen (`NEXT_PUBLIC_SERVER_URL` = tatsächliche Browser-URL; `DATABASE_URI` / gleichwertig).
 3. Better Auth: `baseURL` / `trustedOrigins` passend zur Origin; `providerId` + Callback-Pfad konsistent.
-4. Route `/api/auth/[...all]` → `auth.handler`.
+4. Next.js: Auth-Route unter **`/api/auth`** — bei Payload-Catch-All **`src/app/(payload)/api/auth/[...all]/route.ts`** (siehe Abschnitt **Next.js + Payload 3 (Catch-All)**); Handler **`auth.handler`** / **`getAuth().handler(request)`** dokumentieren, nicht nur `toNextJsHandler`.
 5. Payload: Strategy + `Users`-Collection + `BeforeLogin` / `LogoutButton` registrieren; **Variante** A oder B und `disableLocalStrategy` bewusst wählen.
 6. Einmal mit **Network-Tab** prüfen: OAuth-Callback-Request, Set-Cookie, nächster Request `/admin` mit `Cookie`-Header.
 
