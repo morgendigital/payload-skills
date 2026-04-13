@@ -57,6 +57,14 @@ Siehe Codebeispiel in [`keycloak/description.md`](../keycloak/description.md) (A
 | `BETTER_AUTH_SECRET` | ≥ 32 Zeichen; ideal getrennt von `PAYLOAD_SECRET` |
 | `DATABASE_URI` | MongoDB (Payload + Better Auth; manche Projekte nennen das Feld `DATABASE_URL`) |
 
+## Autorisierung: drei Ebenen (Kurz)
+
+1. **Eingeloggt?** — Session vorhanden (Better Auth: `getSession` / `getBetterAuthSession`).
+2. **App / Client?** — mindestens eine **Client Role** unter `resource_access[<clientId>].roles` (JWT/UserInfo/in Session gespiegelt — Better Auth liefert das nicht immer out-of-the-box).
+3. **Aktion?** — z. B. `admin` / `editor` / `viewer` für feine UI- oder API-Checks.
+
+**Trennung:** Keycloak = **drei Rollen** als Quelle für **Zugriff / Stufe auf der `users`-Collection** (Payload). **Restliche** CMS-Daten und Einstellungen in Payload von Admin/Editor pflegbar; **Editor** darf keine Admin-only-Bereiche ändern (konkrete Felder/Collections projektoffen). Details: [`../keycloak/description.md`](../keycloak/description.md) (Abschnitte *Autorisierung* und *Trennung*).
+
 ## Sicherheit (Kurz)
 
 - Wer den CMS-Client in Keycloak nutzen darf = wer ins Admin kann (Variante B: zusätzlich Payload-Rollen).

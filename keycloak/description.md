@@ -527,11 +527,135 @@ Hinweis: Die **Website** prüft hier primär „gibt es eine Better-Auth-Session
 5. Payload: Strategy + `Users`-Collection + `BeforeLogin` / `LogoutButton` registrieren; **Variante** A oder B und `disableLocalStrategy` bewusst wählen.
 6. Einmal mit **Network-Tab** prüfen: OAuth-Callback-Request, Set-Cookie, nächster Request `/admin` mit `Cookie`-Header.
 
+## Autorisierung: drei Prüfebenen
+
+Was du absicherst, bestimmt die Ebene. Üblich sind **drei Stufen** (von grob nach fein):
+
+### Ebene 1: Ist der User eingeloggt?
+
+```typescript
+// Einfachste Prüfung — nur Session / Login erforderlich
+if (!session) {
+  redirect("/login");
+}
+```
+
+Mit **Better Auth** entspricht das z. B. `getBetterAuthSession()` bzw. `auth.api.getSession({ headers })` ohne Rolle — nur „gibt es eine gültige Session mit User?“.
+
+### Ebene 2: Hat der User Zugriff auf diese App (diesen Keycloak-Client)?
+
+Hier geht es um **Client-Rollen** aus Keycloak, typischerweise im JWT als **`resource_access[<clientId>].roles`**. Der **Client** (z. B. `kunde-a-website` oder `brandportal-cms`) ist der Schlüssel — nicht nur Realm-Rollen.
+
+```typescript
+// Beispiel: Claims liegen in einem Token-Objekt (Form hängt vom Stack ab — siehe Hinweis unten)
+const clientRoles =
+  token?.resource_access?.["kunde-a-website"]?.roles ?? [];
+
+if (clientRoles.length === 0) {
+  redirect("/unauthorized"); // keine Rolle für diesen Client → keine App
+}
+```
+
+### Ebene 3: Hat der User die passende Rolle für die Aktion?
+
+```typescript
+const isAdmin = clientRoles.includes("admin");
+const isEditor = clientRoles.includes("editor");
+
+if (!isAdmin) {
+  return <p>Nur Admins dürfen das.</p>;
+}
+```
+
+Namenskonvention der drei Rollen legt ihr in Keycloak fest (z. B. `admin`, `editor`, `viewer`) und spiegelt sie **konsistent** in Checks und in Payload-Zuordnung (siehe nächster Abschnitt).
+
+### Was typischerweise im Token steckt
+
+Keycloak packt Rollen u. a. in **`realm_access`** (realm-weit) und **`resource_access`** (pro **Client**). Für „darf dieser User **diese** App nutzen?“ und „welche Stufe?“ ist **`resource_access`** für den **jeweiligen Client** der richtige Ort.
+
+```json
+{
+  "sub": "user-uuid",
+  "email": "janik@morgendigital.com",
+  "realm_access": {
+    "roles": ["dev"]
+  },
+  "resource_access": {
+    "kunde-a-website": {
+      "roles": ["admin"]
+    },
+    "brandportal-cms": {
+      "roles": ["editor"]
+    }
+  }
+}
+```
+
+- **`realm_access`** → globale Realm-Rollen (quer über Clients).
+- **`resource_access`** → **client-spezifische** Rollen ← hier prüft ihr **App-Zugriff** und **Stufe** pro Client.
+
+### Wo du die Checks einbaust
+
+| Ort | Wann |
+|-----|------|
+| **Middleware** | Grobe Absicherung ganzer Bereiche (z. B. eingeloggt + mindestens eine Client-Rolle). |
+| **Page / Server Component** | Bereiche innerhalb der App, unterschiedliche Layouts. |
+| **API Route / Server Actions** | Jede mutierende oder sensible Backend-Operation — **immer** serverseitig erneut prüfen. |
+| **Payload `access` / Hooks** | Inhalte und Collections: wer darf lesen/schreiben/löschen (unabhängig vom Frontend). |
+
+### Next.js: Beispiel mit Middleware (NextAuth-Stil) vs. Better Auth
+
+**NextAuth** liefert in Callbacks oft ein `token`-Objekt, an dem sich `resource_access` anhängen lässt — dann passt ein Muster wie:
+
+```typescript
+// middleware.ts — Schutz der gesamten App (NextAuth withAuth)
+// authorized({ token }) {
+//   const roles = token?.resource_access?.["kunde-a-website"]?.roles ?? [];
+//   return roles.length > 0;
+// }
+```
+
+**Better Auth** stellt die Session standardmäßig **nicht** automatisch als vollständiges Keycloak-JWT mit allen Claims bereit. Praktische Optionen:
+
+- Beim Login **ID-Token** (oder UserInfo) parsen und **`resource_access` / Rollen** in der **Session**, im **Payload-`users`-Dokument** oder in einem **eigenen Server-only-Store** spiegeln (und bei Refresh aktualisieren).
+- Oder **Token Introspection** / serverseitigen Abruf nur dort, wo ihr Rollen braucht.
+
+Die **drei Ebenen** bleiben gleich — nur die **Quelle** für `token` bzw. `clientRoles` muss zu eurem Stack passen. Unter **Nuxt** oder anderen Frameworks gelten dieselben Prinzipien: globale Route-Guards für Ebene 1–2, serverseitige Endpoints für Ebene 3, Claims nie nur im Browser vertrauen.
+
+```typescript
+// Konzept: gleiche Logik, sobald ihr clientRoles habt (aus Session, DB oder Introspection)
+const canDelete = clientRoles.includes("admin");
+const canEdit =
+  clientRoles.includes("admin") || clientRoles.includes("editor");
+const canView =
+  canEdit || clientRoles.includes("viewer");
+```
+
+| Check | Wo in Keycloak definiert |
+|-------|---------------------------|
+| Eingeloggt? | Login / gültige OIDC-Session |
+| Zugriff auf diese App? | Mindestens eine **Client Role** am passenden Client |
+| Was darf er? | Welche **Client Roles** (z. B. admin / editor / viewer) |
+
+---
+
+## Trennung: Keycloak-Rollen vs. Payload-Konfiguration
+
+**Empfohlenes Muster für euch:**
+
+- In **Keycloak** legt ihr **drei Client-Rollen** am relevanten Client fest (z. B. `admin`, `editor`, `viewer`). Diese Rollen sind die **autoritative Quelle dafür**, welche **Zuordnung / welches Zugriffslevel ein Account in der Payload-`users`-Collection** hat — also wer das CMS überhaupt in welcher **Rolle** nutzen darf (im Sinne von Payload-`access` auf **`users`** und davon abgeleiteten Admin-Fähigkeiten). Konkrete Mapping-Tabelle (Keycloak-Rolle → Payload `role`-Feld o. Ä.) bleibt projektspezifisch.
+- **Alle anderen** Inhalte und Einstellungen (Seiten, Blöcke, SEO, Medien, projektbezogene Felder, …) werden im **Payload Admin** von **Admin** und **Editor** gepflegt. **Editoren** sollen dabei **nicht** diejenigen Dinge ändern können, die ihr ausschließlich **Admins** vorbehalten wollt — typischerweise alles, was **globale Berechtigungen**, **Rollen-/Rechte-Konfiguration** oder **sensible Systemeinstellungen** betrifft. **Wie** ihr das technisch abbildet (eigene Collection, `access`-Regeln, Feld-`access`, Tabs, nur-admins-Felder), bleibt **bewusst offen** und soll zu eurer Informationsarchitektur passen.
+
+Kurz: **Keycloak** = harte, zentrale **drei Stufen** für **Wer ist welcher User-Typ fürs CMS (`users`)**. **Payload** = alles Weitere inhaltlich und konfigurierbar, mit klarer **Admin vs. Editor**-Grenze für sensible Einstellungen.
+
+---
+
 ## Sicherheit (Kurz)
 
-- Wer den CMS-Client in Keycloak nutzen darf = wer ins Admin kann (bei Variante B zusätzlich Payload-`access`/Rollen beachten).
+- Wer den CMS-Client in Keycloak nutzen darf = wer ins Admin kann (bei Variante B zusätzlich Payload-`access`/Rollen beachten). Ergänzend: **Client-Rollen** (drei Stufen) für **`users`** wie oben.
 - Redirect- und Post-Logout-URIs **eng** halten, keine großen Wildcards.
 - `requireIssuerValidation` in Better Auth nach Möglichkeit aktivieren, wenn Issuer stabil ist.
+- **APIs und Payload-Hooks** immer serverseitig absichern — Middleware allein reicht nicht.
 
 ## Abgrenzung
 
