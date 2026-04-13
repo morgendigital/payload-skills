@@ -37,3 +37,24 @@ Die **Original-Datei** in der Media-Collection wird damit beim Upload verkleiner
 | Dateigröße cap | `payload.config.ts` | `limits.fileSize` + `abortOnLimit`       |
 | WebP           | `Media.ts`          | `formatOptions.format: 'webp'`           |
 | Max. Pixelmaße | `Media.ts`          | `resizeOptions` (Sharp, `fit: 'inside'`) |
+
+## Todo 2: Production-Build — zweistufiger Next.js-Build (`experimental-build-mode`)
+
+**Datei:** `package.json` → Skript `build`
+
+Ersetze ein einfaches `next build` durch eine **zweistufige** Pipeline (hier mit `cross-env` und unterdrückten Deprecation-Warnungen über `NODE_OPTIONS`):
+
+```json
+"build": "cross-env NODE_OPTIONS=--no-deprecation next build --experimental-build-mode generate-env && cross-env NODE_OPTIONS=--no-deprecation next build --experimental-build-mode compile"
+```
+
+### Warum zwei Schritte?
+
+Next.js kann den Build in Modi aufteilen, die **Kompilierung** und **Einbetten von Umgebungsvariablen** voneinander trennen (experimentell):
+
+- **`generate-env`** — Phase, in der **`NEXT_PUBLIC_*`** (und zugehörige Build-Zeit-Env) in die Bundles **eingebettet** werden, damit der Client die erwarteten öffentlichen Werte sieht.
+- **`compile`** — experimenteller **Compile**-Lauf; Next kann dabei **ohne** vorheriges Einbrennen von Env-Werten in Zwischenartefakte arbeiten, sodass reine Compile-Outputs **unabhängiger von konkreten Env-Werten** cachbar sind (sinnvoll für CI-Cache oder Docker-Layer).
+
+Statt eines einzigen `next build` nutzt ihr **zwei** `next build`-Aufrufe mit unterschiedlichen Modi — das ist der **zweite konfigurative Schritt** in dieser Checkliste (nach den Media-Defaults). `NODE_OPTIONS=--no-deprecation` unterdrückt nur Lärm von veralteten Node-APIs während des Builds.
+
+**Reihenfolge:** In der Next.js-Doku und in vielen CI-/Docker-Beispielen ist **`compile` zuerst**, danach **`generate-env`** üblich. Die obige Zeile entspricht der gewünschten Projektvorgabe (`generate-env` → `compile`); wenn der Build fehlschlägt oder Env-Werte fehlen, mit der Reihenfolge **`compile` → `generate-env`** gegenprüfen. Modi sind an die **Next.js-Version** gebunden und können sich ändern.

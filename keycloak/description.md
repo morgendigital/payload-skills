@@ -1,12 +1,10 @@
 # Keycloak + Payload CMS + Better Auth (Next.js)
 
-Wiederverwendbares **Muster** und **Keycloak-Checkliste**, damit jede neue Site schneller korrekt angebunden ist.
-
-**Kurzfassung / Checkliste:** [`docs/keycloak-payload-better-auth.md`](../docs/keycloak-payload-better-auth.md) — dort die Tabelle mit `ORIGIN`, Logout-Hinweis und Sicherheitskurzform.
+Wiederverwendbares **Muster** mit **kompakter Checkliste** (Schnellstart-Tabelle, `ORIGIN`, Redirects, Logout, Umgebungsvariablen, Sicherheit) und **ausführlicher** Anleitung: Architekturvarianten, Codebeispiele, Payload-Strategy und Abläufe.
 
 ## Praxis vor dem ersten Login
 
-1. Checkliste in `docs/keycloak-payload-better-auth.md` mit der echten **`ORIGIN`** durchgehen.
+1. Schnellstart-Tabelle unten mit der echten **`ORIGIN`** durchgehen.
 2. Falls vorhanden: **`GET /api/auth-redirect-uris`** (nur nicht-produktiv) — listet aus der aktuellen `.env` berechnete Callback-URLs; mit Keycloak **Valid redirect URIs** abgleichen.
 3. **Valid post logout redirect URIs** in Keycloak mit dem Pfad abgleichen, den **Logout-Button** / Frontend wirklich als `post_logout_redirect_uri` sendet (z. B. nur `ORIGIN/admin` whitelisten, aber Code nutzt `ORIGIN/admin/login` → Abbruch).
 
@@ -35,6 +33,13 @@ Für **jede** öffentliche Basis-URL der App (lokal, Preview, Production) diesel
 ---
 
 ## Zwei übliche Architektur-Varianten
+
+| | **A — zwei Clients (CMS + Website), „Login only“** | **B — ein Client (CMS), Auto-Provisioning** |
+|--|---------------------------------------------------|---------------------------------------------|
+| Keycloak | CMS-Client + Website-Client, getrennte Redirects | Ein Client; Keycloak steuert, wer den Client nutzen darf |
+| Payload-User | Kein Auto-Provision; Zuordnung über `users` + E-Mail / `betterAuthUserId` | Strategy kann `payload.create` nach OAuth |
+| CMS-Zugriff | Nur bei verknüpftem Account + CMS-`providerId` (Mongo-Account-Scan) | Gültige Session mit CMS-`providerId`; ggf. `realms` nur Anzeige |
+| Referenz | Rtbrick | Brandportal |
 
 ### Variante A — Zwei Keycloak-Clients (CMS + Website), „Login only“
 
