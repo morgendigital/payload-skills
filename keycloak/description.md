@@ -1,6 +1,6 @@
 # Keycloak + Payload CMS + Better Auth (Next.js)
 
-Wiederverwendbares **Muster** mit **kompakter Checkliste** (Schnellstart-Tabelle, `ORIGIN`, Redirects, Logout, Umgebungsvariablen, Sicherheit) und **ausführlicher** Anleitung: Architekturvarianten, Codebeispiele, Payload-Strategy und Abläufe.
+**Ein Dokument** für alles: **kompakte Checkliste** (Praxis vor dem ersten Login, Schnellstart-Tabelle mit `ORIGIN`, Redirects, Logout, Umgebungsvariablen, Sicherheit) und **ausführliche** Anleitung (Architekturvarianten, Codebeispiele, Payload-Strategy, Abläufe, Autorisierung).
 
 ## Praxis vor dem ersten Login
 
