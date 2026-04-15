@@ -60,8 +60,56 @@ Minimaler Ablauf, damit KI und Teams nicht bei Discovery-only, falscher Route od
 6. **`trustedOrigins`:** bereinigtes **`siteRoot`** plus **`http://localhost:3000`** als Fallback fürs lokale Dev.
 7. **Payload-Strategy:** **Auto-Provisioning** standardmäßig **an**; abschalten nur mit **`DISABLE_KEYCLOAK_USER_PROVISIONING=true`** (Env-Name **einheitlich** mit Brandportal — in diesem Playbook nicht umbenennen).
 8. **`users`:** **`disableLocalStrategy: { enableFields: true, optionalPassword: true }`**, **`betterAuthStrategy`**, `BeforeLogin` / `LogoutButton` wie weiter unten.
+9. **Module-Split (PFLICHT, kritisch):** **`KEYCLOAK_CMS_PROVIDER_ID`** lebt in einer **eigenen, side-effect-freien** Datei — z. B. **`src/lib/keycloakProviders.ts`**, die ausschließlich die Konstante exportiert. Sowohl **`src/lib/auth.ts`** als auch **`src/auth/betterAuthStrategy.ts`** als auch **`src/lib/auth-client.ts`** importieren die ID **von dort**. Die Strategy darf **keinen** statischen Import aus **`@/lib/auth`** haben (für die `auth`-Instanz **dynamisches** `await import('@/lib/auth')` innerhalb von `authenticate`). Siehe **„Module-Split: keycloakProviders“** weiter unten — ohne dieses Setup degradiert Payload silent auf `local-jwt` und es entsteht eine **Endlos-Loop auf `/admin/login`** trotz erfolgreicher Keycloak-Anmeldung.
 
 Ohne diesen Block neigen One-Shots zu: nur Discovery, Route unter **`(payload)/api/auth`**, oder ohne Auto-Provision → **HTTP 400** auf OAuth-Start bzw. **Redirect-Schleife auf `/admin/login`**.
+
+### Module-Split: `keycloakProviders` (Pflicht — verhindert silent-degradation auf `local-jwt`)
+
+**Symptom wenn falsch:** OAuth-Flow endet sauber (Cookie wird gesetzt, `auth.api.getSession` liefert User), aber `/admin` redirected zurück zu `/admin/login`. `payload.authStrategies` enthält nur **`local-jwt`** statt **`better-auth`** — `disableLocalStrategy` greift nicht. Im Terminal **kein** Strategy-Log bei `/api/users/me`.
+
+**Ursache:** Die Strategy-Datei wird beim Payload-Bootstrap aus `Users/index.ts` heraus geladen. Wenn sie statisch aus `@/lib/auth` importiert (für eine Konstante wie `KEYCLOAK_CMS_PROVIDER_ID`), wird der gesamte Better-Auth-Init (`betterAuth(...)`, `MongoClient`, `mongodbAdapter`) zum Modul-Lade-Zeitpunkt mitgezogen — *innerhalb* der Payload-Konfig-Ladekette. Jede Race-Condition oder Side-Effect dort führt dazu, dass Payload die Collection mit `auth.strategies` **silent verwirft** und auf den Default (`local-jwt`) fällt. Brandportal löst das mit einer eigenen Datei `@/lib/keycloakProviders`.
+
+**Pflicht-Layout:**
+
+```
+src/
+├── lib/
+│   ├── keycloakProviders.ts   ← side-effect-free, exportiert nur KEYCLOAK_CMS_PROVIDER_ID
+│   ├── auth.ts                ← betterAuth-Instanz (importiert die Konstante aus keycloakProviders)
+│   └── auth-client.ts         ← Browser-Client (importiert die Konstante aus keycloakProviders)
+└── auth/
+    └── betterAuthStrategy.ts  ← Payload-Strategy: importiert die Konstante aus keycloakProviders
+                                   und holt `auth` per `await import('@/lib/auth')` IN authenticate
+```
+
+`src/lib/keycloakProviders.ts` (Beispiel):
+
+```ts
+export const KEYCLOAK_CMS_PROVIDER_ID =
+  process.env.KEYCLOAK_CMS_PROVIDER_ID ??
+  process.env.NEXT_PUBLIC_KEYCLOAK_CMS_PROVIDER_ID ??
+  '<projektname>-cms'
+```
+
+`src/auth/betterAuthStrategy.ts` (Top-Level):
+
+```ts
+import type { AuthStrategy } from 'payload'
+import { KEYCLOAK_CMS_PROVIDER_ID } from '@/lib/keycloakProviders' // ✅ side-effect-free
+// ❌ NIEMALS: import { KEYCLOAK_CMS_PROVIDER_ID } from '@/lib/auth'
+
+export const betterAuthStrategy: AuthStrategy = {
+  name: 'better-auth',
+  authenticate: async ({ headers, payload }) => {
+    const { auth } = await import('@/lib/auth') // ✅ dynamisch — kein Bootstrap-Cycle
+    const session = await auth.api.getSession({ headers })
+    // … find/create Payload user, sync realms, return { user }
+  },
+}
+```
+
+**Diagnose-Endpoint (empfohlen, dev-only):** `GET /api/auth-debug` baut sich Payload via `getPayload({ config })` und gibt u. a. `payload.authStrategies.map(s => s.name)` zurück. Erscheint dort nur `local-jwt`, wurde die Strategy nicht registriert → Module-Split prüfen.
 
 ### Variante B — Ein Keycloak-Client (nur CMS), Auto-Provisioning
 
@@ -587,7 +635,8 @@ Kurzreferenz für Support, Debugging und **KI-Prompts** — vor Refactoring imme
 | Symptom | Häufige Ursache |
 |--------|------------------|
 | `POST /api/auth/sign-in/oauth2` **400** | `providerId` passt nicht zur Server-Config; und/oder **Discovery** schlägt fehl oder liefert falsche URLs → **manuelle OIDC-URLs** + korrektes **`redirectURI`** |
-| OAuth **302**, danach **`/admin/login`**-Loop | Kein Payload-**User** und **kein** Auto-Provision; oder **`DISABLE_KEYCLOAK_USER_PROVISIONING=true`** gesetzt, obwohl kein User existiert |
+| OAuth **302** OK, Cookie gesetzt, `getSession` liefert User — trotzdem **`/admin/login`**-Loop, **kein** Strategy-Log im Terminal | **Strategy nicht registriert.** `payload.authStrategies` enthält nur **`local-jwt`** (Diagnose via `/api/auth-debug`). Ursache fast immer: Strategy-Datei importiert statisch aus **`@/lib/auth`** → Better-Auth-Init zieht beim Payload-Bootstrap mit → Collection-Auth wird silent verworfen. **Fix:** **`KEYCLOAK_CMS_PROVIDER_ID`** in eigene Datei **`src/lib/keycloakProviders.ts`** auslagern, Strategy importiert von dort, `auth` nur **dynamisch** (`await import('@/lib/auth')`) in `authenticate`. Siehe **Module-Split: keycloakProviders**. |
+| OAuth **302**, danach **`/admin/login`**-Loop, Strategy-Log **vorhanden**, aber kein User | Kein Payload-**User** und **kein** Auto-Provision; oder **`DISABLE_KEYCLOAK_USER_PROVISIONING=true`** gesetzt, obwohl kein User existiert. Auch: stale **`payload-token`**-Cookie aus früherem lokalen Login → Cookies komplett leeren. |
 | **404** auf `/api/auth/...` | Request landet im Payload-**Catch-All** → Auth-Route **spezifischer** anlegen oder **Root-**`app/api/auth/[...all]` verwenden (siehe Routing-Priorität) |
 | Logout bricht ab / Keycloak-Fehler | **`post_logout_redirect_uri`** in Keycloak **nicht** bytegenau wie im Code (z. B. `/admin/login` vs. `/admin`) oder **`client_id`** falsch |
 
@@ -617,10 +666,12 @@ Hinweis: Die **Website** prüft hier primär „gibt es eine Better-Auth-Session
 
 1. Keycloak-Client(s) + **Redirect-URIs** + **Post-Logout-URIs** wie in der Schnellstart-Tabelle (`ORIGIN`, `providerId`).
 2. `.env` setzen (`NEXT_PUBLIC_SERVER_URL` = tatsächliche Browser-URL; `DATABASE_URI` / gleichwertig).
-3. Better Auth: `baseURL` / `trustedOrigins` passend zur Origin; `providerId` + Callback-Pfad konsistent.
-4. Next.js: Auth-Route unter **`/api/auth`** — **zuerst** **`src/app/api/auth/[...all]/route.ts`** (Root-`app`); nur bei Bedarf **`(payload)/api/auth/[...all]/route.ts`**. Handler z. B. **`export const GET = auth.handler`**, **`POST = auth.handler`** — siehe **Next.js + Payload 3 (Catch-All)** und **Golden Path**.
-5. Payload: Strategy + `Users`-Collection + `BeforeLogin` / `LogoutButton` registrieren; **Variante** A oder B und `disableLocalStrategy` bewusst wählen.
-6. Einmal mit **Network-Tab** prüfen: OAuth-Callback-Request, Set-Cookie, nächster Request `/admin` mit `Cookie`-Header.
+3. **Module-Split anlegen (Pflicht):** `src/lib/keycloakProviders.ts` mit nur **`KEYCLOAK_CMS_PROVIDER_ID`** als Export; `src/lib/auth.ts`, `src/lib/auth-client.ts` und `src/auth/betterAuthStrategy.ts` importieren die Konstante **von dort**. Strategy holt `auth` per **`await import('@/lib/auth')` IN** `authenticate` — kein statischer Import. Siehe **Module-Split: keycloakProviders**.
+4. Better Auth: `baseURL` / `trustedOrigins` passend zur Origin; `providerId` + Callback-Pfad konsistent.
+5. Next.js: Auth-Route unter **`/api/auth`** — **zuerst** **`src/app/api/auth/[...all]/route.ts`** (Root-`app`); nur bei Bedarf **`(payload)/api/auth/[...all]/route.ts`**. Handler z. B. **`export const GET = auth.handler`**, **`POST = auth.handler`** — siehe **Next.js + Payload 3 (Catch-All)** und **Golden Path**.
+6. Payload: Strategy + `Users`-Collection + `BeforeLogin` / `LogoutButton` registrieren; **Variante** A oder B und `disableLocalStrategy` bewusst wählen.
+7. **Smoke-Test** via Diagnose-Endpoint **`GET /api/auth-debug`** (dev-only): muss `payload.authStrategies` mit **`better-auth`** enthalten (nicht nur `local-jwt`); nach OAuth-Login: `betterAuth.hasSession: true` und `payload.userExists: true`.
+8. Einmal mit **Network-Tab** prüfen: OAuth-Callback-Request, Set-Cookie, nächster Request `/admin` mit `Cookie`-Header. Bei Loop: **alle** Cookies für die Origin leeren (insb. **`payload-token`** aus früheren Versuchen) und Dev-Server **hart** neu starten.
 
 ## Autorisierung: drei Prüfebenen
 
@@ -764,13 +815,28 @@ Kurz: **Keycloak** = harte, zentrale **drei Stufen** für **Wer ist welcher User
 
 ```text
 Implementiere Keycloak-Login fürs Payload-Admin nach morgendigital/payload-skills keycloak/description.md,
-Variante B (Brandportal-Referenz / Golden Path): Better Auth + genericOAuth, eine MongoDB,
+Variante B (Brandportal-Referenz / Golden Path): Better Auth + genericOAuth, eine MongoDB.
+
+Module-Split (PFLICHT — sonst Loop auf /admin/login trotz erfolgreicher Anmeldung):
+  - src/lib/keycloakProviders.ts exportiert AUSSCHLIESSLICH KEYCLOAK_CMS_PROVIDER_ID (keine Side-Effects).
+  - src/lib/auth.ts (betterAuth-Instanz), src/lib/auth-client.ts und src/auth/betterAuthStrategy.ts
+    importieren die Konstante von '@/lib/keycloakProviders' — NIEMALS aus '@/lib/auth'.
+  - betterAuthStrategy.authenticate holt `auth` per `const { auth } = await import('@/lib/auth')`
+    INNERHALB der Funktion (kein statischer Import von '@/lib/auth' im Modul-Top-Level).
+
 Route src/app/api/auth/[...all]/route.ts mit auth.handler (GET/POST), mongodbAdapter transaction: false,
 manuelle Keycloak-OIDC-URLs + explizites redirectURI = {siteRoot}/api/auth/oauth2/callback/<providerId>,
-KEYCLOAK_CMS_PROVIDER_ID serverseitig und NEXT_PUBLIC_KEYCLOAK_CMS_PROVIDER_ID im BeforeLogin-Client,
 publicSiteRootUrl falls NEXT_PUBLIC_SERVER_URL fehlerhaft, emailAndPassword disabled + session.cookieCache disabled,
-trustedOrigins siteRoot + http://localhost:3000, Payload users mit disableLocalStrategy enableFields/optionalPassword,
-betterAuthStrategy mit Auto-Provisioning; DISABLE_KEYCLOAK_USER_PROVISIONING nur für Login-only setzen.
+trustedOrigins siteRoot + http://localhost:3000, Payload users mit disableLocalStrategy { enableFields, optionalPassword },
+strategies: [betterAuthStrategy], Felder betterAuthUserId + realms;
+betterAuthStrategy mit Auto-Provisioning (DISABLE_KEYCLOAK_USER_PROVISIONING nur für Login-only setzen).
+
+Browser: NEXT_PUBLIC_KEYCLOAK_CMS_PROVIDER_ID + NEXT_PUBLIC_KEYCLOAK_ISSUER setzen
+(BeforeLogin nutzt providerId für signIn.oauth2; LogoutButton baut Keycloak end-session-URL realm-pfad-erhaltend).
+
+Smoke-Test: dev-only-Endpoint GET /api/auth-debug bauen, der payload.authStrategies dumped.
+Akzeptanz: registered enthält 'better-auth' (NICHT nur 'local-jwt'); nach OAuth: hasSession true + payload.userExists true.
+
 Keycloak: Valid redirect URIs = ORIGIN/api/auth/oauth2/callback/<providerId>; Post-Logout-URIs bytegenau wie LogoutButton.
 ```
 
