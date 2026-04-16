@@ -6,7 +6,7 @@ Collection of practical checklists and implementation notes for **Payload CMS** 
 
 | Document | What it covers |
 | -------- | -------------- |
-| [payload-start/description.md](payload-start/description.md) | Checklist for bootstrapping a new Payload site: upload size limits, WebP output, Sharp resize rules, and related `payload.config.ts` / `Media` collection settings. |
+| [payload-start/description.md](payload-start/description.md) | Bootstrapping a new Payload site (target: **Dokploy on Hetzner**): upload limits, WebP/Sharp resize, **`@payloadcms/storage-s3`**, proxy/body limits for large files, then experimental two-step Next.js build. |
 | [security-check/description.md](security-check/description.md) | Pre-deployment security checklist for Next.js, Payload, and hosting: HTTP headers, env/secrets, CORS, rate limiting, file uploads, admin hardening, and infrastructure basics. |
 | [honey-pot-capcha/description.md](honey-pot-capcha/description.md) | Public Payload forms: **honeypot** field plus **ALTCHA** proof-of-work — challenge route, server-side verification, replay protection, and Server Actions before writing to Payload (`altcha` / `altcha-lib`, Next.js App Router). |
 | [tracking/description.md](tracking/description.md) | How GTM, tracking, and the cookie banner fit together: `c15t` consent manager, provider setup, categories, and central `pushTrackingEvent` behavior. |

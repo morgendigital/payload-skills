@@ -220,6 +220,28 @@ const Users: CollectionConfig = {
 }
 ```
 
+### Private Uploads & Medien (Lebensläufe, Verträge, sonstige sensible Dateien)
+
+**Risiko:** Dateien, die nur bestimmten Nutzerinnen oder Rollen gelten sollen (z. B. **Lebensläufe**, Bewerbungsunterlagen, Verträge, Gesundheitsdaten), dürfen nicht wie öffentliche Assets erreichbar sein — weder über eine vorhersehbare URL noch über einen GET ohne Session.
+
+**Prüfpunkte (manuell oder automatisiert):**
+
+1. **Next.js `public/`**  
+   Alles unter `public/` wird vom Server **ohne Authentifizierung** unter der Root-URL ausgeliefert (z. B. `public/uploads/…` → `/uploads/…`). Sensible Dateien **nie** dort ablegen oder hineinkopieren (Build-Artefakte, manuelle Ablage, falscher Upload-Pfad). Siehe [Next.js: `public` folder](https://nextjs.org/docs/app/api-reference/file-conventions/public-folder).
+
+2. **Payload Upload-Collections: `access.read`**  
+   Für Collections mit `upload: { … }` steuert **`access.read`** auch den Zugriff auf die ausgelieferten Dateien (u. a. über Payloads Dateiroute, typisch `/:collectionSlug/file/:filename`). Eine öffentliche Medien-Galerie kann `read: () => true` haben — für **private** Dokumente muss `read` dagegen z. B. an `req.user`, Rollen oder eine explizite Freigabe geknüpft sein (nicht nur die REST-API „absichern“, während die Datei-URL für jeden funktioniert). Siehe [Payload: Collection Access Control](https://payloadcms.com/docs/access-control/collections).
+
+3. **`@payloadcms/storage-s3` (Standard)**  
+   In neuen Projekten nutzen wir das offizielle Plugin **`@payloadcms/storage-s3`** (S3-API: AWS, R2, MinIO, …). **Standard:** URLs bleiben über Payloads Dateiroute, damit **`access.read`** der Upload-Collection weiterhin greift — Bucket also **nicht** weltweit öffentlich lesbar machen.  
+   **`disablePayloadAccessControl: true`** zusammen mit **`generateFileURL`** (z. B. öffentliche R2-/CDN-URL) nur setzen, wenn die Dateien **bewusst öffentlich** sein sollen; sonst ist Payloads Zugriffskontrolle umgangen. Für große Dateien optional **`signedDownloads`** / Presigned URLs — siehe [Payload: Storage adapters](https://payloadcms.com/docs/upload/storage-adapters) und Plugin-README.  
+   **Secrets:** `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_BUCKET`, `S3_REGION` nur in der Laufzeitumgebung, nie im Client (`NEXT_PUBLIC_*` nicht für Keys). Setup-Schritte: [`payload-start/description.md`](../payload-start/description.md) (Todo 2).
+
+4. **Was konkret testen?**  
+   - URL aus dem Admin oder der API (Feld `url` / Dateilink) in **Inkognito** oder mit `curl` **ohne** Cookies/Auth aufrufen — muss **403/404** liefern, wenn die Datei privat sein soll.  
+   - Gleiches für **abgeleitete Größen** (`sizes`), falls genutzt.  
+   - Prüfen, ob sensible Uploads in einer **eigenen Collection** mit strengerem `read` liegen (nicht in derselben wie öffentliche Bilder mit `read: () => true`).
+
 ---
 
 ## 6. Rate Limiting
@@ -409,6 +431,9 @@ npx -y react-doctor@latest . --diff
 | React Doctor ausgeführt (Security-/Lint-Findings abgearbeitet)  | ☐        |
 | MongoDB nicht öffentlich erreichbar (nur intern)                | ☐        |
 | Rate Limiting auf kritischen API-Routen                         | ☐        |
+| Private Uploads (z. B. Lebensläufe): nicht unter `public/`; Payload `access.read` / Storage-URLs geprüft (ohne Auth kein Zugriff) | ☐        |
+| S3/R2: `@payloadcms/storage-s3` konfiguriert; Bucket privat; keine Secrets in `NEXT_PUBLIC_*`; `disablePayloadAccessControl` nur bei bewusst öffentlichen Assets | ☐        |
+| Reverse Proxy vor Dokploy (z. B. NPM): Upload-Body-Limit ≥ Payload `upload.limits.fileSize` (sonst 413 bei großen Medien) | ☐        |
 | Fehler-Logging eingerichtet (z. B. Sentry oder eigenes Logging) | ☐        |
 
 ---
