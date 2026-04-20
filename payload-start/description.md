@@ -102,3 +102,24 @@ Optional je nach Setup weitere Werte aus der AWS-/S3-Doku in `config`.
 | ---- | -- | --- |
 | S3-Anbindung | `payload.config.ts` | `s3Storage({ … })` in `plugins`, `collections` + `bucket` + `config` aus `process.env` |
 | Secrets | `.env` / Hosting-Env | Bucket, Region, Access Key ID, Secret Access Key — **nicht** committen |
+
+## Todo 4: Meta-Daten (SEO) — Payload überschreibt die Defaults
+
+**Ziel:** Alle für die öffentliche Seite relevanten **Meta-Daten** (Titel, Beschreibung, Open Graph, Canonical, ggf. Twitter Cards, strukturierte Daten) sollen **aus Payload** kommen und **statische Next.js-Defaults bewusst überschreiben**, sobald im CMS Werte gesetzt sind.
+
+### 4.1 Defaults nur als Fallback
+
+- In **`layout.tsx`** / Root-**`metadata`** nur noch **minimale Fallbacks** halten (Site-Name, Basis-Locale, ein generisches `description`, falls nichts aus Payload geladen werden kann).
+- Pro Route **`generateMetadata`** (oder gleichwertige Datenquelle) nutzen und **Payload-Daten** (z. B. Globals wie „SEO“, Seiten-/Post-Dokumente) laden.
+- Wenn Payload Felder liefert, diese **explizit zurückgeben**, sodass sie die Root-Defaults **ersetzen** (nicht nur ergänzen, wenn ihr vollständige Kontrolle aus dem CMS wollt). Leere CMS-Felder können weiterhin auf die Fallbacks aus dem Layout zurückfallen — das Verhalten im Projekt einheitlich festlegen.
+
+### 4.2 OG-Bilder und Media
+
+- **`openGraph.images`** / **`twitter.images`** aus Payload beziehen (z. B. Relation zur **Media**-Collection, absolute URLs für Produktion), damit Social-Previews nicht auf statischen Platzhaltern aus dem Repo hängen bleiben.
+
+### Kurzüberblick (Todo 4)
+
+| Ziel | Wo | Wie |
+| ---- | -- | --- |
+| CMS > Default | Route-`generateMetadata` + ggf. Globals | Payload-Werte setzen `title`, `description`, `openGraph`, … und überschreiben Root-Defaults |
+| Konsistenz | Layout | Nur schmale Fallbacks, keine „harten“ Marketing-Texte, die das CMS später nicht ersetzt |
