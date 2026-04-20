@@ -1,258 +1,165 @@
-# Tracking und Cookie Banner
+# Tracking und Cookie-Banner (c15t 2.x)
 
-Diese Datei beschreibt, wie in diesem Projekt `GTM`, allgemeines Tracking und der Cookie-Banner aktuell umgesetzt sind.
+Diese Datei beschreibt, wie in Payload/Next-Projekten **GTM**, allgemeines Tracking und der Cookie-Banner mit **`@c15t/nextjs` ^2.x** umgesetzt werden sollen. **Pfade und Dateinamen** sind bewusst als **Richtlinie** formuliert — bitte an die **tatsächliche Projektstruktur** anpassen (nicht alles muss in einer einzigen Provider-Datei liegen).
+
+## Agenten: Quellen-Reihenfolge
+
+- Zuerst die **installierte Paket-Doku** lesen: `node_modules/@c15t/nextjs/docs/README.md` sowie dort verlinkte Seiten (z. B. `script-loader.md`).
+- Ergänzend: [c15t — AI Agents](https://c15t.com/docs/ai-agents) und die Website-Doku — bei Abweichungen gewinnt die **installierte Version** im Repo.
 
 ## Überblick
 
-Die Consent- und Tracking-Logik ist zentral in `src/providers/index.tsx` und `src/lib/tracking/push.ts` aufgebaut:
+- **`@c15t/nextjs` ^2.x** ist der Consent-Manager; UI-Komponenten heißen **`ConsentBanner`** und **`ConsentDialog`** (nicht mehr `CookieBanner` / `ConsentManagerDialog` aus 1.x).
+- Externe Tracking-Skripte werden über **`ConsentManagerProvider`** mit **`options.scripts`** registriert — oder nachträglich per **`useConsentManager().setScripts(...)`** (siehe installiertes **`script-loader.md`**).
+- Es gibt **keinen** stabilen Export **`@c15t/nextjs/client`** / **`ClientSideOptionsProvider`** in **2.0.0** (kein `./client`-Pfad). Nicht nach veralteten Snippets aus 1.x-Projekten suchen.
+- Eigene Tracking-Events laufen zentral über **`pushTrackingEvent(...)`**.
+- Events werden nur gesendet, wenn **Marketing-Consent** vorliegt (siehe Abschnitt [Marketing-Consent (2.x)](#marketing-consent-2x)).
 
-- `c15t` ist der Consent-Manager und steuert den Cookie-Banner sowie den Privacy-Dialog.
-- Externe Tracking-Skripte werden im `ConsentManagerProvider` registriert.
-- Eigene Tracking-Events laufen zentral über `pushTrackingEvent(...)`.
-- Tracking-Events werden nur gesendet, wenn Marketing-Consent vorhanden ist.
+## Empfohlene Dateistruktur (nicht nur eine Provider-Datei)
 
-## Cookie Banner und Consent Manager
+Statt alles in `src/providers/index.tsx` zu stapeln:
 
-Die Basis liegt in `src/providers/index.tsx`.
+| Rolle | Typischer Pfad / Modul |
+| ----- | ---------------------- |
+| App-Shell | **`src/providers/index.tsx`**: nur den Wrapper einbinden (z. B. `ConsentAndTrackingProvider`). |
+| Client-Bundle Consent + UI | **`src/components/Consent/ConsentAndTrackingProvider.client.tsx`** (oder gleichwertig): `ConsentManagerProvider`, `ConsentBanner`, `ConsentDialog`, Bridges zu Tracking, optional `TrackingClickListeners`. |
+| Consent-Optionen / Scripts bauen | **`src/lib/tracking/buildConsentOptions.ts`** (oder `buildConsentTrackingScripts()` — Namen projektintern vereinheitlichen). |
+| Event-Namen | **`src/lib/tracking/events.ts`**. |
+| Push-Pipeline | **`src/lib/tracking/push.ts`**. |
+| Store ↔ Tracking (Marketing-Flag) | **`src/lib/tracking/consentBridge.ts`**: z. B. `setMarketingConsentFromStore`, `getMarketingConsent()`. |
+| Öffentliche IDs zur Build-Zeit | **`src/lib/tracking/publicTracking.build.ts`** (generiert) + Skript **`scripts/generate-public-tracking.mjs`**. |
 
-Dort wird der komplette App-Tree mit `ConsentManagerProvider` umschlossen. Der Provider ist aktuell so konfiguriert:
+Wichtig für Skills und Reviews: **„Pfade an die tatsächliche Projektstruktur anpassen“** — die **Trennung** (Provider-Hülle vs. Client-Consent vs. `lib/tracking`) ist das Ziel, nicht ein einzelner Monster-Import.
 
-- `mode: 'offline'`
-- `ignoreGeoLocation: true`
-- definierte Kategorien:
-  - `necessary`
-  - `marketing`
-  - `measurement`
-  - `experience`
-  - `functionality`
+## Cookie-Banner und Consent Manager (2.x)
 
-Zusätzlich werden dort auch die Texte und das UI-Theming für folgende Komponenten gesetzt:
+Konfiguration erfolgt über **`ConsentManagerProvider`** (u. a. `mode`, Kategorien, Texte, Theming). **`ConsentBanner`** und **`ConsentDialog`** werden als Kinder oder über die vom Paket vorgesehene API eingebunden — Details in der **installierten** README.
 
-- `CookieBanner`
-- `ConsentManagerDialog`
+Hinweise zu älteren Doku-Beispielen:
 
-Das bedeutet:
-
-- Der erste Banner wird global über den Provider eingebunden.
-- Das Detail-Modal zum nachträglichen Anpassen der Einwilligung ist ebenfalls global vorhanden.
-- Styling und Texte liegen zentral an einer Stelle.
+- **`ignoreGeoLocation`** aus 1.x-Setups existiert in 2.x **nicht 1:1**; Verhalten und Optionen im **`node_modules/@c15t/nextjs/docs/README.md`** nachschlagen.
+- Kategorien (z. B. `necessary`, `marketing`, `measurement`, …) weiterhin projektkonform mit **`buildConsentOptions`** / Provider-Config abstimmen.
 
 ## Wo der Cookie-Dialog geöffnet wird
 
-Im Footer gibt es einen eigenen Einstiegspunkt für die Cookie-Einstellungen:
+Typisch im Footer:
 
-- `src/Footer/FooterClient.tsx`
-- `src/components/CookieBanner/CookieButton.tsx`
+- z. B. `src/Footer/FooterClient.tsx` und ein Button (z. B. `src/components/CookieBanner/CookieButton.tsx` — **Dateiname** kann abweichen).
 
-`CookieButton` nutzt `useConsentManager()` von `@c15t/nextjs` und öffnet den Dialog über:
+Mit **`useConsentManager()`** von **`@c15t/nextjs`** den Dialog öffnen, z. B.:
 
 ```ts
 consentManager.setIsPrivacyDialogOpen(true);
 ```
 
-Falls diese API nicht verfügbar ist, gibt es einen Fallback, der den Customize-Button des Banners per DOM-Selektor klickt.
+(API-Namen bei Minor-Upgrades prüfen — Quelle: installierte Paket-Doku.) Optional bleibt ein DOM-Fallback (Customize-Button des Banners), falls die API in einem Edge-Case nicht greift.
 
-## Einbindung von GTM, GA4 und Meta Pixel
+## GTM, GA4 und Meta Pixel — Skripte
 
-Die externen Tracking-Skripte werden in `src/providers/index.tsx` über `buildScripts()` vorbereitet.
+Skripte **nicht** lose im Root-Layout duplizieren, sondern an **c15t** anbinden:
 
-Verwendete Environment-Variablen:
+- vorrangig **`ConsentManagerProvider`** → **`options.scripts`**, oder
+- **`useConsentManager().setScripts(...)`** nach der Doku in **`script-loader.md`**.
+
+Verwendete Umgebungsvariablen (üblich):
 
 - `NEXT_PUBLIC_GTM_ID`
 - `NEXT_PUBLIC_META_PIXEL_ID`
 - `NEXT_PUBLIC_GA4_MEASUREMENT_ID`
 
-Wenn die jeweiligen Variablen vorhanden sind, werden folgende Skripte registriert:
+Konkrete Helper (`googleTagManager`, `metaPixel`, `gtag`, …) und Kategorie-Zuordnung stehen in der **Paket-Doku** der installierten 2.x-Version.
 
-- `googleTagManager({ id: gtmId })`
-- `metaPixel({ pixelId: metaPixelId })`
-- `gtag({ id: ga4Id, category: 'measurement' })`
+### Wichtig: `next.config.js` → `env` reicht hier oft nicht
 
-Wichtig:
+Allein **`env`** in `next.config.js` **ersetzt** das unten beschriebene Build-Muster **nicht**, wenn `NEXT_PUBLIC_*` zur **Compile-Phase** nicht zuverlässig im Client-Bundle landen sollen. Teams sollen nicht nur an `env` festhalten und wundern, warum im Browser IDs fehlen.
 
-- Die Skripte werden nicht manuell im Layout eingebunden.
-- Sie werden dem `ConsentManagerProvider` über `options.scripts` übergeben.
-- Dadurch ist die Script-Verwaltung an den Consent-Manager gekoppelt.
+## Production-Build ohne Mongo + zuverlässige `NEXT_PUBLIC_*` (Tracking-IDs)
 
-## Wie das allgemeine Event-Tracking funktioniert
+Viele Payload/Next-Templates nutzen einen **zweiphasigen** Build:
 
-Die zentrale Event-Pipeline liegt in `src/lib/tracking/push.ts`.
-
-Die wichtigste Funktion ist:
-
-```ts
-pushTrackingEvent(eventName, eventData?)
+```text
+next build --experimental-build-mode generate-env && next build --experimental-build-mode compile
 ```
 
-Diese Funktion übernimmt drei Aufgaben:
+Damit muss in der **Compile-Phase** oft **keine MongoDB** erreichbar sein.
 
-1. Prüfen, ob Marketing-Consent vorhanden ist.
-2. Das Event an die angebundenen Tracking-Systeme weiterreichen.
-3. Optional Debug-Logs ausgeben.
+**Problem:** In dieser Pipeline können **`NEXT_PUBLIC_GTM_ID`**, **GA4**, **Meta** im Client-Bundle **nicht** zuverlässig aus **`process.env`** „eingefroren“ werden. Symptom: im Browser fehlen Werte (z. B. leere oder fehlende Nutzung von öffentlichen IDs) → **GTM/Tags greifen nicht**, Tag Assistant zeigt u. U. nichts Nützliches bei **rein dynamisch** injizierten Skripten.
 
-## Consent-Prüfung vor jedem Tracking
+### Empfohlenes Muster
 
-Bevor ein Event gesendet wird, wird über `getMarketingConsent()` geprüft, ob Tracking erlaubt ist.
+1. **Skript** `scripts/generate-public-tracking.mjs`, das **vor** der **`compile`-Phase** läuft und aus **CI-/Vercel-Env** (optional lokal **`dotenv`** für `.env`) eine Datei **`src/lib/tracking/publicTracking.build.ts`** schreibt, die IDs als **String-Literale** enthält (kein reines `process.env.NEXT_PUBLIC_*` im Client-Pfad, das in `compile` leer bleibt).
+2. **`package.json`** (Build), z. B.:
 
-Die Prüfung ist absichtlich robust aufgebaut und liest Consent aus mehreren möglichen Quellen:
+   ```text
+   … generate-env && pnpm run generate:public-tracking && … compile
+   ```
 
-- `window.c15tStore.getState()`
-- `window.c15t.hasConsent('marketing')`
-- `window.c15t.has('marketing')`
-- `window.c15t.preferences`
-- `localStorage` mit c15t-bezogenen Keys
-- Cookie-Fallbacks
+   Lokal **`dev`**: `generate:public-tracking` vor **`next dev`**, damit Dev und Prod ähnlich starten.
+3. **`buildConsentTrackingScripts()`** (oder gleichwertig): beim Auflösen der IDs **zuerst** die exportierten Konstanten aus **`publicTracking.build.ts`**, sonst Fallback auf **`process.env`** für reine Dev-Sessions ohne Generator-Lauf.
 
-Zusätzlich wird ein interner Cache `cachedMarketingConsent` verwendet, der über `initConsentCache()` gepflegt wird. Dabei wird auf Consent-Änderungen reagiert, damit nach einer nachträglichen Zustimmung direkt getrackt werden kann.
+So sind **GTM/GA4/Meta**-IDs für den **Browser-Build** vorhersehbar gesetzt, unabhängig davon, ob `compile` Env anders sieht als `generate-env`.
 
-## Wohin Events gesendet werden
+## Marketing-Consent (2.x)
 
-Wenn Consent vorhanden ist, schreibt `pushTrackingEvent(...)` das Event in mehrere Targets:
+Die alte 1.x-Doku mit **`window.c15tStore`**, **`window.c15t.hasConsent('marketing')`**, diversen **`window.c15t.*`-Pfaden** und aggressivem `localStorage`-Scan ist für **2.x nicht zuverlässig** und soll **nicht** mehr als Primärquelle dienen.
 
-### 1. `dataLayer`
+**Variante (nur 2.x):**
 
-Für GTM wird immer in das globale `dataLayer` gepusht:
+- Aus **`useConsentManager().consents.marketing`** (bzw. der in der installierten Version dokumentierten Struktur) den Marketing-Status lesen.
+- Im Modul **`consentBridge.ts`** (oder gleichwertig) **`setMarketingConsentFromStore`** und **`getMarketingConsent()`** kapseln; `pushTrackingEvent` nutzt ausschließlich **`getMarketingConsent()`** (kein direktes `window.c15t*` im Push-Pfad).
+- Optional nach Zustimmung **`updateScripts()`** (oder die in 2.x dokumentierte Methode) aufrufen, damit registrierte Skripte nachziehen.
 
-```ts
-w.dataLayer.push({ event: eventName, ...eventData });
-```
+## `pushTrackingEvent` — Ziele projektspezifisch
 
-Damit kann GTM die Custom Events direkt verarbeiten.
+Die Pipeline in **`push.ts`** soll **projektspezifisch** konfigurierbar sein:
 
-### 2. `gtag`
-
-Falls `gtag` vorhanden ist, wird zusätzlich gesendet an:
-
-```ts
-w.gtag("event", eventName, eventData ?? {});
-```
-
-Das ist relevant für GA4.
-
-### 3. `fbq`
-
-Falls Meta Pixel geladen ist, wird zusätzlich gesendet an:
-
-```ts
-fbq("trackCustom", eventName, eventData);
-```
-
-Ohne Payload wird entsprechend nur der Event-Name gesendet.
+- **Immer** sinnvoll: **`dataLayer.push(...)`** für GTM.
+- **Meta:** **`fbq`** wenn Meta Pixel Teil des Setups ist.
+- **`gtag('event', …)`** ist **optional**: Wenn Messung **primär über GTM** läuft, vermeidet das Weglassen von `gtag` **Doppel-Events** oder konkurrierende GA4-Pfade. In der Skills-Doku explizit: **Ziele wählen, nicht blind alle drei aktivieren.**
 
 ## Debugging für Tracking
 
-In `src/lib/tracking/push.ts` gibt es einen Debug-Modus.
-
-Debug ist aktiv, wenn eine der folgenden Bedingungen erfüllt ist:
+In **`push.ts`** (oder zentraler Debug-Hilfe) einen Debug-Modus vorsehen, z. B. aktiv wenn:
 
 - URL enthält `?tracking_debug=1`
 - `localStorage.setItem('tracking_debug', 'true')`
 - `NODE_ENV === 'development'`
 - `NEXT_PUBLIC_TRACKING_DEBUG === 'true'`
 
-Dann werden in der Konsole Informationen geloggt:
-
-- ob ein Event wegen fehlendem Consent übersprungen wurde
-- ob `dataLayer`, `gtag` und `fbq` tatsächlich angesprochen wurden
+Logs z. B.: Event wegen fehlendem Consent übersprungen; welche **Ziele** (`dataLayer`, optional `gtag`, `fbq`) tatsächlich angesprochen wurden.
 
 ## Zentrale Event-Namen
 
-Die Event-Namen sind zentral definiert in:
-
-- `src/lib/tracking/events.ts`
-
-Aktuell gibt es dort zwei Gruppen:
-
-- `pageview`
-- `click`
-
-Beispiele:
-
-- `pageview_home`
-- `pageview_jobs`
-- `anruf`
-- `mail_gesendet`
-- `kontaktformular_gesendet`
-
-Der Vorteil davon ist, dass Event-Namen nicht an vielen Stellen im Code hart codiert werden.
+Typisch in **`src/lib/tracking/events.ts`**: Konstanten für **`pageview`** und **`click`**, damit keine String-Duplikate im UI entstehen.
 
 ## Pageview-Tracking
 
-Für Seitenaufrufe gibt es die Komponente:
-
-- `src/components/MetaPixel/PageViewTracker.tsx`
-
-Sie bekommt einen `eventName` und sendet den Pageview genau einmal, sobald Consent vorhanden ist.
-
-Wichtig an der Umsetzung:
-
-- Wenn beim ersten Render noch kein Consent vorliegt, wird noch nichts gesendet.
-- Sobald der User später Marketing erlaubt, reagiert `onConsentChange(...)` und der Pageview kann doch noch gesendet werden.
-- Über `useRef` wird verhindert, dass derselbe Pageview mehrfach gepusht wird.
-
-Verwendung aktuell zum Beispiel in:
-
-- `src/app/(frontend)/[locale]/[slug]/page.tsx`
-- `src/app/(frontend)/public-relations/page.tsx`
+Komponente z. B. **`PageViewTracker.tsx`** (Pfad z. B. unter `src/components/MetaPixel/` oder `src/components/Tracking/`): einmaliger Pageview nach Marketing-Consent, Reaktion auf nachträgliche Zustimmung, Deduplizierung z. B. mit **`useRef`**.
 
 ## Klick-Tracking
 
-Das globale Klick-Tracking sitzt in:
+Global z. B. **`TrackingClickListeners.tsx`**: Listener auf `document`, Mapping für `tel:` / `mailto:` / Button-Texte; am Ende nur **`pushTrackingEvent(...)`**.
 
-- `src/components/MetaPixel/TrackingClickListeners.tsx`
+## SalesViewer und Drittanbieter
 
-Diese Komponente wird im Frontend-Layout eingebunden:
+Scripts wie **SalesViewer**, die per **`next/script`** geladen werden, sollten **dieselbe Consent-Strategie** wie GTM/Meta nutzen — nicht dauerhaft parallel „always on“, wenn das Marketing-Modell das nicht erlaubt.
 
-- `src/app/(frontend)/[locale]/layout.tsx`
+## Architektur-Vorteile
 
-Sie registriert einen globalen Click-Listener auf `document` und erkennt aktuell unter anderem:
-
-- Klicks auf `tel:`-Links
-- Klicks auf `mailto:`-Links
-- Klicks auf bestimmte Buttons anhand ihres Textes
-
-Beispiele für gemappte Button-Texte:
-
-- `Send it`
-- `Bewerbung absenden`
-- `Jetzt bewerben`
-
-Teilweise werden dabei zusätzliche Daten mitgegeben, zum Beispiel:
-
-- `tel`
-- `email`
-- `jobTitle`
-
-Die Komponente selbst ruft am Ende immer nur die zentrale Funktion `pushTrackingEvent(...)` auf. Dadurch bleibt die Tracking-Logik von der UI getrennt.
-
-## Aktuelle Besonderheit: SalesViewer
-
-Im Layout `src/app/(frontend)/[locale]/layout.tsx` ist zusätzlich ein `next/script` für SalesViewer eingebunden.
-
-Aktuell wird dieses Script direkt mit `afterInteractive` geladen.
-
-Wichtig dabei:
-
-- Es ist momentan nicht an die zentrale Consent-Logik aus `pushTrackingEvent(...)` gekoppelt.
-- Im File gibt es eine auskommentierte Variante, die SalesViewer erst nach Marketing-Consent laden würde.
-- Der aktive Stand ist also: SalesViewer lädt derzeit unabhängig von der beschriebenen Event-Tracking-Pipeline.
-
-Falls man hier dieselbe Consent-Strategie wie bei GTM, GA4 und Meta Pixel möchte, sollte SalesViewer ebenfalls an `c15t` gekoppelt werden.
-
-## Architektur-Vorteile der aktuellen Lösung
-
-- Consent-Management ist zentral im Provider gebündelt.
-- Event-Versand läuft über genau eine zentrale Funktion.
-- UI, Consent-Handling und Event-Dispatch sind sauber getrennt.
-- GTM, GA4 und Meta Pixel können parallel über dieselbe Event-Pipeline bedient werden.
-- Durch zentrale Event-Konstanten bleibt das Setup wartbar.
+- Consent und Skript-Lifecycle über **c15t 2.x** und Provider-API.
+- Eine zentrale **`pushTrackingEvent`**-Pipeline; UI getrennt von Versand.
+- Build-Zeit-IDs über **Generator + `publicTracking.build.ts`**, damit **zweiphasiger Next-Build** und **Payload** nicht zu leeren `NEXT_PUBLIC_*` im Client führen.
 
 ## Kurzfassung
 
-So ist das Setup aktuell gedacht:
+1. **c15t 2.x** mit **`ConsentManagerProvider`**, **`ConsentBanner`**, **`ConsentDialog`**; Skripte über **`options.scripts`** / **`setScripts`**.
+2. **`generate:public-tracking`** zwischen **`generate-env`** und **`compile`**; **`dev`** startet den Generator mit.
+3. **`pushTrackingEvent`** nur mit **`getMarketingConsent()`** aus der **2.x-Bridge**, nicht mit 1.x-`window`-Hacks.
+4. **Ziele** in **`push.ts`** bewusst wählen (**`gtag` optional** bei GTM-first).
+5. Footer öffnet den Consent-Dialog erneut.
 
-1. `c15t` zeigt Banner und Consent-Dialog an.
-2. GTM, GA4 und Meta Pixel werden über den Consent-Manager registriert.
-3. Eigene Events laufen immer über `pushTrackingEvent(...)`.
-4. Ohne Marketing-Consent wird nichts an `dataLayer`, `gtag` oder `fbq` gesendet.
-5. Der Footer-Button öffnet den Consent-Dialog erneut, damit Nutzer ihre Auswahl ändern können.
+## Checkliste: Neues Projekt aus Template
+
+- [ ] **`NEXT_PUBLIC_GTM_ID`** / **GA4** / **Meta** in der **Build-Umgebung** (z. B. Vercel) gesetzt.
+- [ ] **`pnpm build`** (bzw. npm/yarn) inkl. **`generate:public-tracking`** **zwischen** `generate-env` und `compile`.
+- [ ] Nach Deploy: **Netzwerk** auf **`gtm.js`** und **Consent-Flow** prüfen; **Tag Assistant** allein ist bei dynamisch injizierten Tags **unzuverlässig**.
