@@ -639,7 +639,7 @@ Kurzreferenz für Support, Debugging und **KI-Prompts** — vor Refactoring imme
 | OAuth **302**, danach **`/admin/login`**-Loop, Strategy-Log **vorhanden**, aber kein User | Kein Payload-**User** und **kein** Auto-Provision; oder **`DISABLE_KEYCLOAK_USER_PROVISIONING=true`** gesetzt, obwohl kein User existiert. Auch: stale **`payload-token`**-Cookie aus früherem lokalen Login → Cookies komplett leeren. |
 | **404** auf `/api/auth/...` | Request landet im Payload-**Catch-All** → Auth-Route **spezifischer** anlegen oder **Root-**`app/api/auth/[...all]` verwenden (siehe Routing-Priorität) |
 | Logout bricht ab / Keycloak-Fehler | **`post_logout_redirect_uri`** in Keycloak **nicht** bytegenau wie im Code (z. B. `/admin/login` vs. `/admin`) oder **`client_id`** falsch |
-| Container wird vom **OOM-Killer** beendet (z. B. 748 MB+ RAM bei Dokploy/Swarm), Strategy-Log **`🔐 [better-auth strategy] CALLED — cookie: (none)`** wiederholt sich **hunderte Male pro Minute** ohne aktive User-Session | Next.js **Middleware** (`middleware.ts` bzw. **`proxy.ts`** ab Next.js 16) läuft ungefiltert (Default-Matcher) **für jeden Request** — auch `_next/static`, Bilder, Fonts, Favicon — und triggert in jedem davon `auth.api.getSession(...)` bzw. die Payload-Strategy. Better-Auth/Mongo-Allokationen pro Request akkumulieren bis OOM. **Fix:** **Matcher** auf nicht-statische Pfade einschränken **und** Early-Return ohne Session-Cookie. Siehe **Middleware-Hygiene** weiter unten. |
+| Container wird vom **OOM-Killer** beendet (z. B. 748 MB+ RAM bei Dokploy/Swarm), Strategy-Log **`🔐 [better-auth strategy] CALLED — cookie: (none)`** wiederholt sich **hunderte Male pro Minute** ohne aktive User-Session | **Nicht** die Next.js Middleware/`proxy.ts` triggert das — sondern **Payload selbst** ruft `betterAuthStrategy.authenticate` an **jedem** authentifizierten Endpoint (Admin-UI, REST/GraphQL, jeder `payload.auth({ headers })`-Call). Ohne Cookie macht die Strategy trotzdem `await import('@/lib/auth')` + `auth.api.getSession(...)` + ggf. `payload.find()` → Better-Auth/Mongo-Allokationen pro Request akkumulieren bis OOM. **Fix:** in `betterAuthStrategy.ts` **vor** dem dynamischen `auth`-Import auf Session-Cookie prüfen und ohne Cookie sofort `{ user: null }` zurückgeben; `console.log` → `payload.logger.debug`. Siehe **Strategy-Hygiene** weiter unten. |
 | Nach Next.js-Upgrade auf **16** ist Auth-Schutz **silent weg** — Middleware feuert nicht mehr, Routen sind ungeschützt obwohl `middleware.ts` existiert | Next.js 16 hat die Konvention umbenannt: Datei muss **`proxy.ts`** heißen und Funktion **`proxy(request)`** exportieren. Alte `middleware.ts` wird ignoriert. **Fix:** Datei umbenennen + Funktionsname anpassen; `config.matcher` bleibt gleich. CI-Check: `grep -r "export.*function middleware" src/`. Siehe **Middleware-Hygiene**. |
 
 ## Ablauf: Website-Login (`keycloak-ui`, Variante A)
@@ -785,64 +785,116 @@ const canView =
 | Zugriff auf diese App? | Mindestens eine **Client Role** am passenden Client |
 | Was darf er? | Welche **Client Roles** (z. B. admin / editor / viewer) |
 
-### Middleware-Hygiene (Pflicht — verhindert OOM unter Load)
+### Strategy-Hygiene (Pflicht — verhindert OOM unter Load)
 
 **Symptom:** Container frisst sich über Stunden in den RAM (z. B. 748 MB+), der **OOM-Killer** beendet den Prozess, in den Logs erscheint hunderte Male pro Minute `🔐 [better-auth strategy] CALLED — cookie: (none)` bzw. `[better-auth strategy] No usable session { hasSession: false }` — auch ohne eingeloggte User.
 
-**Ursache:** Next.js Middleware nutzt **ohne expliziten `matcher`** den Default und läuft pro Request — inkl. `_next/static`, `_next/image`, Fonts, Favicon, Bilder. Wenn die Middleware bei jedem Request `auth.api.getSession({ headers })` ruft (oder einen Call macht, der die Payload-`betterAuthStrategy` triggert), öffnet jeder dieser Asset-Requests einen Better-Auth-Codepfad inklusive Mongo-Client-Allokationen. Da Better Auth und Mongo Driver bei jedem Aufruf kleine Mengen Memory halten und Node.js den Heap nur lazy freigibt, baut sich der RSS über Zeit auf bis OOM. Besonders gefährlich auf Self-hosted (Docker Swarm / Dokploy / Hetzner) ohne harte Memory-Limits.
+**Wer feuert die Strategy wirklich?** Wichtige Abgrenzung, weil hier oft falsch diagnostiziert wird:
 
-**Dateiname je nach Next.js-Version:**
+- **Payload selbst** ruft `betterAuthStrategy.authenticate` bei **jedem** authentifizierten Request: Admin-UI-Navigation, REST/GraphQL, jeder `payload.auth({ headers })`-Aufruf in eurem Code. Das ist die **eigentliche Quelle** der Strategy-Logs.
+- Die Next.js **`middleware.ts` / `proxy.ts`** triggert die Strategy **nicht automatisch** — nur, wenn ihr dort explizit `auth.api.getSession(...)` oder `payload.auth(...)` aufruft. Eine Middleware, die nur Header setzt (z. B. `x-pathname`), hat **keinen** Anteil am Memory-Druck.
 
-- **Next.js ≤ 15:** Datei heißt **`middleware.ts`** (bzw. `src/middleware.ts`), Export-Funktion `middleware(request)`.
-- **Next.js ≥ 16:** Datei heißt **`proxy.ts`** (bzw. `src/proxy.ts`), Export-Funktion `proxy(request)`. Das Konzept ist identisch — Next.js hat umbenannt, weil der Codepfad faktisch ein Edge-Proxy ist, kein klassisches Middleware-Pattern. Die `config.matcher`-Syntax bleibt gleich.
-- In beiden Fällen liegt die Datei **neben** `app/` (also auf gleicher Ebene, **nicht** *in* `app/`).
-- Bei Migration von 15 → 16: alte `middleware.ts` zu `proxy.ts` umbenennen, Funktion `middleware` zu `proxy`, sonst greift sie stillschweigend **nicht mehr** und Auth-Schutz fällt aus. Hier ein Build-Check (`grep -r "export.*function middleware" src/`) im CI ist Gold wert.
+**Ursache:** Selbst ohne Session-Cookie macht die Strategy **`await import('@/lib/auth')`** (zieht Better-Auth + Mongo-Adapter lazy ins Modul-System), **`auth.api.getSession({ headers })`** (Better-Auth-Codepfad + ggf. DB-Roundtrip) und in vielen Implementierungen direkt einen **`payload.find({ collection: 'users', … })`**-Call. Pro Request bleiben kleine Allokationen am Better-Auth/Mongo-Driver-Closure hängen; der RSS klettert linear bis OOM. Besonders gefährlich auf Self-hosted (Docker Swarm / Dokploy / Hetzner) ohne hartes Memory-Limit.
 
-In den Beispielen unten steht `middleware.ts` / `middleware(request)` — bei Next.js 16+ überall `proxy.ts` / `proxy(request)` lesen.
+**Drei kombinierte Fixes — Reihenfolge nach Impact, alle drei setzen:**
 
-**Zwei kombinierte Fixes — beides setzen, nicht nur eins:**
+**1) Cookie-Guard *in der Strategy* (der eigentliche Fix — schneidet die Hauptlast ab):**
 
-**1) `matcher` einschränken** (`src/middleware.ts` bzw. `src/proxy.ts` ab Next.js 16):
+```ts
+// src/auth/betterAuthStrategy.ts
+import type { AuthStrategy } from 'payload'
+import { KEYCLOAK_CMS_PROVIDER_ID } from '@/lib/keycloakProviders'
 
-```typescript
+const SESSION_COOKIE_NAMES = ['better-auth.session_token', 'session'] as const
+
+export const betterAuthStrategy: AuthStrategy = {
+  name: 'better-auth',
+  authenticate: async ({ headers, payload }) => {
+    // ✅ Cookie-Check VOR dynamic import + getSession + payload.find
+    const cookieHeader = headers.get?.('cookie') ?? ''
+    const hasSessionCookie = SESSION_COOKIE_NAMES.some((name) =>
+      cookieHeader.includes(`${name}=`),
+    )
+    if (!hasSessionCookie) {
+      return { user: null }
+    }
+
+    // Erst hier: Better Auth + Mongo werden überhaupt angefasst
+    const { auth } = await import('@/lib/auth')
+    const session = await auth.api.getSession({ headers })
+    if (!session?.user) return { user: null }
+
+    // … find/create Payload user, sync realms, return { user }
+  },
+}
+```
+
+**Wichtig zur Reihenfolge:** Der Check muss **vor** `await import('@/lib/auth')` stehen — sonst zieht jeder Asset-Request, der irgendwie in die Payload-Auth-Pipeline kommt, trotzdem den Better-Auth-Init mit. Cookie-Namen je nach Better-Auth-Version anpassen (Konfig-Override möglich); im Zweifel beide oben aufgelisteten prüfen.
+
+**2) Excessive `console.log` runterstufen** (`payload.logger.debug` statt `console.log`):
+
+Der Strategy-Log `🔐 [better-auth strategy] CALLED — cookie: …` ist selbst ein Allokations-Hotspot: String-Slice auf den Cookie-Header, Object-Construction, JSON-Serialisierung pro Request. In Production sollte das auf `payload.logger.debug(...)` — wird per **`LOG_LEVEL=debug`** aktiviert, ist sonst ein No-Op. Generell: pro Request ein `console.log` mit Objekten ist auf einem Hot-Path nie umsonst.
+
+**3) `proxy.ts`-Matcher als Hygiene-Schicht** (zweitrangig, kostet aber wenig):
+
+Schneidet die Frequenz, in der Next.js die Middleware/`proxy.ts` für statische Assets überhaupt anwirft. Reduziert **nicht** Strategy-Calls (siehe oben), aber spart Header-Arbeit und ist generell sauber:
+
+```ts
+// src/proxy.ts (Next.js ≥ 16) bzw. src/middleware.ts (≤ 15)
 export const config = {
   matcher: [
-    // Alles außer statischer Next-Output, Bildern und Favicon
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.png|.*\\.jpg|.*\\.jpeg|.*\\.svg|.*\\.ico|.*\\.webp).*)',
+    '/((?!_next/static|_next/image|favicon\\.(?:ico|svg)|api|admin|.*\\.(?:png|jpe?g|svg|ico|webp|woff2?|css|js|map)).*)',
   ],
 }
 ```
 
-**2) Early-Return ohne Session-Cookie** (Better Auth setzt typischerweise `better-auth.session_token`; je nach Adapter/Version auch `session`):
+**Zwei Sicherheitslinien auf Deploy-Ebene** — beide setzen, sie greifen unterschiedlich:
 
-```typescript
-import { NextResponse, type NextRequest } from 'next/server'
+**A) Node Heap-Limit im `start`-Script** (`package.json`) — zwingt V8 zum GC, statt unbegrenzt zu allokieren:
 
-export async function middleware(request: NextRequest) {
-  // Kein Cookie → kein Auth-Check nötig, kein Better-Auth-Codepfad anstoßen
-  const hasCookie =
-    request.cookies.get('better-auth.session_token') ??
-    request.cookies.get('session')
-
-  if (!hasCookie) {
-    return NextResponse.next()
+```json
+{
+  "scripts": {
+    "start": "cross-env NODE_OPTIONS='--no-deprecation --max-old-space-size=512' next start"
   }
-
-  // ... bestehende Auth-Logik (auth.api.getSession etc.)
 }
 ```
 
-**Warum beides:** Der Matcher reduziert die *Frequenz* (Assets fallen raus). Der Early-Return reduziert die *Kosten pro Request* für anonyme Besucher der nicht-gematchten Pfade (Landing-Page, öffentliche Seiten). Ohne Matcher feuern Asset-Requests trotzdem; ohne Early-Return feuert jeder anonyme Page-Hit immer noch eine teure Better-Auth-Operation.
+- **`--max-old-space-size=<MB>`** setzt die Obergrenze für den V8 Old-Space (Default in Node ist ~1.5–4 GB je nach Build). Wenn der Heap dem Limit nähert, läuft ein **aggressiver Major-GC**, statt einfach weiter zu wachsen. Erst wenn auch nach GC kein Platz da ist, killt Node sich selbst mit `JavaScript heap out of memory` — Docker startet den Container kontrolliert neu, statt dass der Host-RAM erstickt.
+- **Wert wählen:** Referenzwert SAAC läuft stabil bei **~383 MiB** RSS mit `--max-old-space-size=512`. Für Neurauter o. Ä. mit aktuell **~748 MiB**: erst mit `512` probieren — wenn zu häufige Restarts, in **256-MB-Stufen** hochziehen (`768`, dann `1024`). Wert immer **kleiner** als das Docker-Limit unten halten, sonst killt Docker den Prozess bevor Node selbst aufräumen kann.
+- Bezieht sich nur auf den **V8 Old-Space** — Native-Allokationen (Mongo-Driver-Buffer, Sharp/Image-Lib) zählen separat. Deshalb ist Limit B unten nötig.
 
-**Sicherheitsnetz:** Zusätzlich ein **hartes Memory-Limit** in der Deploy-Plattform setzen (Dokploy / Docker Swarm: `--limit-memory 600m`–`800m`), damit ein Leak — egal wo — den Host nicht mehr mitnimmt. Das Limit ist kein Fix, sondern ein **Circuit-Breaker**: Der Container wird sauber neu gestartet, statt den Host-RAM zu erschöpfen.
+**B) Docker Memory-Limit** (`--limit-memory`) — schützt den Host vor allem, was Node-Heap nicht abfängt (Native-Memory-Leaks, Sharp, FFI):
+
+```bash
+docker service update --limit-memory 900m <service-name>
+# z. B.:
+docker service update --limit-memory 900m neurauter-frontend-iolyza
+```
+
+In Dokploy: pro Application in den **Resource Limits** den Wert eintragen (UI macht intern dasselbe). Faustregel: **Docker-Limit ≈ 1.5–2× `--max-old-space-size`** (z. B. Node 512 MB → Docker 900 MB), damit Node-Heap, V8-Overhead, Native-Memory und kurzzeitige Spitzen Platz haben, der Host aber bei einem echten Leak nicht mitkommt.
+
+**Reihenfolge im Fail-Mode (gut):** Node erreicht Heap-Limit → Major-GC → wenn nicht reicht: Node-Selbstkill → Docker-Restart in wenigen Sekunden, **bevor** das Docker-Limit greift. **Reihenfolge im Worst-Case (auch okay):** Native-Leak frisst RSS außerhalb des V8-Heap → Docker-Limit greift → harter Container-Kill → Restart. **Was wir vermeiden:** Kein Limit irgendwo → RSS wächst bis Host-OOM → der Host-Kernel killt **irgendeinen** Prozess (oft den teuersten, nicht zwingend Node).
+
+Diese beiden Linien sind **kein Fix** für das Leak selbst — sie sind ein **Circuit-Breaker** und sollten **zusätzlich** zum Cookie-Guard und Log-Level-Fix oben stehen.
 
 **Verifizieren:**
 
-- Im Dev-Server eine statische Datei aufrufen (z. B. `/favicon.ico` oder `/_next/static/...`) → es darf **kein** Strategy-Log erscheinen.
-- In einem Inkognito-Tab eine öffentliche Seite öffnen → maximal **ein** Strategy-Log pro Page-Navigation, nicht pro Asset.
-- Unter Last (z. B. `autocannon` / `wrk` gegen die Startseite) sollte der RSS **plateau-en** und nicht linear wachsen.
+- Mit leerem Cookie eine geschützte Seite aufrufen → Strategy gibt **sofort** `{ user: null }` zurück; **kein** `await import('@/lib/auth')`-Log, **kein** Mongo-Query.
+- Mit gültiger Session: Strategy-Log einmal pro Page-Navigation, nicht pro Sub-Resource.
+- Unter Last (`autocannon`/`wrk` gegen `/`): RSS sollte **plateau-en**, nicht linear wachsen.
+- Heap-Snapshot (Chrome DevTools → Node) vor und nach 5 min Last vergleichen — Retained Size der Mongo-/Better-Auth-Closures darf nicht steigen.
 
-**Abgrenzung zur Payload-Strategy:** Der Strategy-Log kommt aus **`betterAuthStrategy.authenticate`** in Payload (`src/auth/betterAuthStrategy.ts`) und feuert bei jedem Payload-API-Hit, der eine Authentifizierung anfragt. Die Middleware ist nur **einer** der Auslöser — Payload-API-Routes (`/api/users/me`, REST-Reads) feuern die Strategy weiterhin. Wenn der Strategy-Log auch nach Middleware-Fix in hoher Frequenz auftaucht, prüfen, **wer** `auth.api.getSession` aufruft (Server Components mit `cache: 'no-store'`, Polling-Hooks im Admin, Health-Checks).
+### Next.js Middleware vs. `proxy.ts` (separat von OOM)
+
+Unabhängig vom OOM-Thema: **Dateinamen-Konvention je nach Next.js-Version** — wichtig für **Auth-Schutz auf Page-Ebene** (nicht für die Strategy-Calls oben):
+
+- **Next.js ≤ 15:** Datei heißt **`middleware.ts`** (bzw. `src/middleware.ts`), Export-Funktion `middleware(request)`.
+- **Next.js ≥ 16:** Datei heißt **`proxy.ts`** (bzw. `src/proxy.ts`), Export-Funktion `proxy(request)`. Next.js hat umbenannt, weil der Codepfad faktisch ein Edge-Proxy ist, kein klassisches Middleware-Pattern. Die `config.matcher`-Syntax bleibt gleich.
+- In beiden Fällen liegt die Datei **neben** `app/` (gleiche Ebene, **nicht** *in* `app/`).
+- Bei Migration von 15 → 16: alte `middleware.ts` zu `proxy.ts` umbenennen, Funktion `middleware` zu `proxy`, sonst greift sie stillschweigend **nicht mehr** und Page-Level-Auth-Schutz fällt aus. CI-Check: `grep -r "export.*function middleware" src/`.
+
+In den Beispielen oben steht `middleware.ts` / `middleware(request)` — bei Next.js 16+ überall `proxy.ts` / `proxy(request)` lesen.
 
 ---
 
@@ -863,7 +915,7 @@ Kurz: **Keycloak** = harte, zentrale **drei Stufen** für **Wer ist welcher User
 - Redirect- und Post-Logout-URIs **eng** halten, keine großen Wildcards.
 - `requireIssuerValidation` in Better Auth nach Möglichkeit aktivieren, wenn Issuer stabil ist.
 - **APIs und Payload-Hooks** immer serverseitig absichern — Middleware allein reicht nicht.
-- **Middleware-Matcher explizit setzen** und Early-Return ohne Session-Cookie — sonst frisst sich der Node-Prozess unter Load in den RAM, bis der OOM-Killer den Container kippt. Zusätzlich **hartes Memory-Limit** auf Deploy-Ebene (Dokploy/Swarm: 600–800 MB) als Sicherheitsnetz. Siehe **Middleware-Hygiene**.
+- **Cookie-Guard in `betterAuthStrategy.authenticate`** vor dem dynamischen `auth`-Import — sonst frisst sich der Node-Prozess unter Load in den RAM, weil Payload die Strategy bei jedem Auth-Request feuert (Admin, REST/GraphQL) und Better-Auth/Mongo-Allokationen akkumulieren bis OOM. Zusätzlich `console.log` → `payload.logger.debug`, **`--max-old-space-size`** im `start`-Script (Node erzwingt GC statt unbegrenztem Wachstum) und **Docker Memory-Limit** als zweite Linie. Siehe **Strategy-Hygiene**.
 
 ## Abgrenzung
 
