@@ -14,6 +14,7 @@ Collection of practical checklists and implementation notes for **Payload CMS** 
 | [advanced-link/description.md](advanced-link/description.md) | CMS link system: Payload `link()` / `linkGroup()`, Lexical rich-text links, `CMSLink`, internal docs vs custom URLs, and **action** links (e.g. newsletter popup via custom events). |
 | [pop-up/description.md](pop-up/description.md) | Marketing popup and newsletter dialog: Payload globals (`popup`, `newsletterTexts`), layout wiring, Lenis, CMSLink actions, and the popup section block. |
 | [northlight-global-css/description.md](northlight-global-css/description.md) | Placeholder heading for global CSS variables in the Northlight Payload template (extend this file when documenting tokens). |
+| [performance/description.md](performance/description.md) | Next.js performance cheat sheet: bundle analyzer, `serverExternalPackages`, `optimizePackageImports`, `dynamic()` code-splitting, ISR `revalidate`, image cache TTL + LCP `priority`, parallel/cached fetching (`cache()` / `unstable_cache`), on-demand revalidation (`revalidateTag` / `revalidatePath`), `<Suspense>` streaming, and Turbopack build cache — plus a per-project quick checklist. |
 
 ## Folder layout
 
