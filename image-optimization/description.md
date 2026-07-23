@@ -38,6 +38,14 @@ S3-Bucket (Originale bleiben privat)
 Ein **Compose-Service** (wie die bestehenden `minio`-Services). **Eine** Instanz kann
 alle Projekte bedienen, die aus demselben S3 lesen.
 
+> **Default/Shared-Instanz (morgendigital):** Es läuft bereits eine gemeinsame
+> Instanz unter **`https://imgproxy.northlight.website`**, die den zentralen
+> S3 (`storage.morgendigital.website`) liest. Für ein **neues Projekt am selben
+> S3** ist Todo 1 damit i. d. R. **erledigt** — direkt zu **Todo 3** springen und
+> nur `NEXT_PUBLIC_IMGPROXY_URL=https://imgproxy.northlight.website` +
+> `NEXT_PUBLIC_IMGPROXY_BUCKET=s3://<bucket>` setzen. Eine **eigene** Instanz nur
+> aufsetzen, wenn ein Projekt aus einem **anderen** S3/Bucket-Endpoint liest.
+
 **Wichtig:**
 - **S3 nativ** einbinden (`IMGPROXY_USE_S3`), nicht per HTTP — Payload-Media sind i. d. R.
   `acl: private`, ein HTTP-Fetch der Originale schlägt fehl. Mit S3-Credentials liest
@@ -184,11 +192,16 @@ mit `IMGPROXY_ALLOWED_SOURCES=s3://` ist die Angriffsfläche gering.
 ```bash
 pnpm add @morgendigital/next-imgproxy
 ```
-**Env** (pro Projekt eigener Bucket):
+**Env** (pro Projekt eigener Bucket) — für Projekte am zentralen morgendigital-S3
+ist `NEXT_PUBLIC_IMGPROXY_URL` die geteilte Default-Instanz aus Todo 1:
 ```env
-NEXT_PUBLIC_IMGPROXY_URL=https://imgproxy.<domain>
+NEXT_PUBLIC_IMGPROXY_URL=https://imgproxy.northlight.website
 NEXT_PUBLIC_IMGPROXY_BUCKET=s3://<bucket>
 ```
+
+> **Achtung Build-Zeit:** `NEXT_PUBLIC_*` wird beim `next build` ins Client-Bundle
+> eingebacken. In Dokploy als **Build-Env** setzen, sonst bleibt der Loader
+> deaktiviert (`imgproxyEnabled=false`) und es läuft weiter der On-Server-Optimizer.
 **Eine konfigurierte Instanz** anlegen und überall importieren:
 ```ts
 // src/utilities/imgproxy.ts
