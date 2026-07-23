@@ -552,6 +552,31 @@ Hinweis: Pro Admin-Request mit gültiger Session kann das **mehrere DB-Roundtrip
 
 Die Strategy wird für **Payload Admin / `payload.auth` mit User-Collection** genutzt. Die **öffentliche Website** nutzt dagegen oft nur **`getBetterAuthSession()`** und prüft `session?.user`, **ohne** das `keycloak-cms`-Gate — daher der Hinweis weiter unten bei „Website-Login“.
 
+### Performance/Crash: Strategy läuft auf **jedem** Request — nicht ungebremst arbeiten (wichtig!)
+
+`betterAuthStrategy` hängt an der `users`-Collection, also ruft Payload `authenticate` **bei jeder** Auth-Auflösung auf — auch für **anonyme** öffentliche Requests (Middleware/`proxy.ts`, SSR, Crawler). Wenn `authenticate` dabei **jedes Mal** ein dynamisches `import('@/lib/auth')` **plus** ein DB-gestütztes `auth.api.getSession({ headers })` macht, pinnt das auf self-hosted (Dokploy/Hetzner) unter Traffic-/Crawler-Last CPU/Memory → **OOM-Kill / Crash-Loop** (`ELIFECYCLE exit 1`). Symptom vorher: Spam-Logs `authenticate CALLED — cookie: (none)` bei jedem Seitenaufruf.
+
+**Fix — Early-Return, bevor irgendetwas Teures passiert:** ist gar **kein** Better-Auth-Session-Cookie da, sofort `{ user: null }` zurückgeben (kein Import, kein `getSession`, keine DB):
+
+```ts
+// Deckt Dev (better-auth.session_token) und Prod-Secure-Cookies (__Secure-/__Host-) ab.
+// Achtung: passt NICHT, wenn ihr in betterAuth einen custom advanced.cookiePrefix setzt.
+const SESSION_COOKIE_RE = /(?:^|;\s*)(?:__Secure-|__Host-)?better-auth\.session_token=/
+
+authenticate: async ({ headers, payload }) => {
+  const cookieHeader = headers?.get?.('cookie') ?? ''
+  if (!SESSION_COOKIE_RE.test(cookieHeader)) return { user: null } // ~99% des Traffics
+  const { auth } = await import('@/lib/auth')
+  // ... erst jetzt getSession + payload.find/create ...
+}
+```
+
+Zusätzlich in **`proxy.ts`** (Next 16 Middleware — früher `middleware.ts`) statische Assets aus dem `matcher` ausschließen (`.webp/.avif/.js/.css/.woff2/...`), damit die Middleware nicht auch noch pro Bild/Font läuft.
+
+**Nur `payload.logger.debug/info/warn`** in der Strategy verwenden, **keine `console.log`** — sonst floodet jeder Request die Prod-Logs (und kostet extra I/O). Der Log-Level ist über Payload konfigurierbar; `console.log` nicht.
+
+Passt gut zur [image-optimization](../image-optimization/description.md)-Skill: beides sind „läuft-pro-Request-und-killt-den-Self-Hosted-Server“-Fallen.
+
 ## Umgebungsvariablen
 
 | Variable | Zweck |
