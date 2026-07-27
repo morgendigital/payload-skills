@@ -281,21 +281,100 @@ export async function POST(req: Request) {
 
 ---
 
-## 7. Dependency Security
+## 7. Dependency Security (pnpm audit-Gate + Dependabot)
+
+Zwei sich ergänzende Ebenen, in jedem Projekt gleich umsetzbar:
+
+- **Dependabot** behebt die *Ursache* → öffnet automatisch PRs (Security- + Version-Updates).
+- **Audit-Gate im Deploy** ist das *Sicherheitsnetz* → blockt den Build, wenn trotzdem eine kritische Lücke drin ist.
+
+Lockfile (`pnpm-lock.yaml`) immer committen (exakte Versionen).
+
+### 7.1 pnpm audit – Basics
 
 ```bash
-# Auf bekannte Sicherheitslücken prüfen
-npm audit
+# Alle Findings ansehen
+pnpm audit
 
-# Automatisch behebbare Lücken fixen
-npm audit fix
+# Nur Production-Deps (Dev-only-Advisories wie vitest ausblenden)
+pnpm audit --prod
 
-# Regelmäßig deps updaten
-npx npm-check-updates -u
+# Als Gate: exit != 0, sobald ein Finding >= Schwelle existiert
+pnpm audit --prod --audit-level critical   # bzw. high | moderate | low
 ```
 
-- `package-lock.json` committen (exakte Versionen sichern)
-- In CI/CD `npm audit --audit-level=high` als Step einbauen
+> `pnpm audit` liefert einen **Non-Zero Exit-Code**, sobald Findings ≥ `--audit-level`
+> vorliegen — genau das macht es als Build-Gate nutzbar. Für ein Deploy-Gate **`--prod`**
+> setzen, damit reine Dev-Tools (z. B. `vitest`) den Prod-Deploy nicht blockieren.
+
+**Realistische Schwelle wählen:** Bei bestehenden Projekten sind oft viele transitive
+`high`-Advisories offen (z. B. `sharp`/`libvips`), die nicht alle sofort fixbar sind. Dann mit
+**`critical`** starten (heute grün, blockt das Schlimmste) und nach einem Remediation-Durchlauf
+auf `high` hochziehen — ist nur ein Wort in der `nixpacks.toml`.
+
+### 7.2 Deploy-Gate (Nixpacks / Dokploy)
+
+`nixpacks.toml` im Projekt-Root — schiebt eine Audit-Phase zwischen `install` und `build`:
+
+```toml
+# Fail the deploy build on CRITICAL vulns in production deps.
+# --prod blendet Dev-only-Advisories aus. Nach Remediation auf `high` hochziehen.
+[phases.audit]
+dependsOn = ["install"]
+cmds = ["pnpm audit --prod --audit-level critical"]
+
+[phases.build]
+dependsOn = ["install", "audit"]
+cmds = ["pnpm run build"]
+```
+
+> Ohne `nixpacks.toml` erkennt Nixpacks Install/Build automatisch. Sobald man Phasen
+> überschreibt, den echten Build-Command (`pnpm run build`) **explizit** wieder angeben.
+> Optional `--ignore-registry-errors`, falls transiente Registry-Ausfälle keine Deploys
+> blockieren sollen (schwächt das Gate minimal ab).
+
+### 7.3 Dependabot
+
+`.github/dependabot.yml` — wöchentliche PRs, Payload-Pakete zwingend im Gleichschritt:
+
+```yaml
+version: 2
+updates:
+  - package-ecosystem: "npm" # deckt pnpm ab (nutzt pnpm-lock.yaml)
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    versioning-strategy: increase
+    labels: ["dependencies"]
+    groups:
+      # Payload-Pakete müssen immer gemeinsam auf dieselbe Version -> ein PR.
+      payload:
+        patterns: ["payload", "@payloadcms/*"]
+      # Übrige Minor/Patch gebündelt gegen PR-Rauschen.
+      minor-and-patch:
+        update-types: ["minor", "patch"]
+    # Major-Updates (außer Payload) einzeln -> gezielte Review.
+```
+
+**Zwei einmalige Schritte, die NICHT über die Datei laufen:**
+
+1. **GitHub → Settings → Code security:** „Dependabot alerts" **und** „Dependabot security
+   updates" aktivieren (erst dann Auto-PRs aus Advisories).
+2. Datei muss auf dem **Default-Branch** (`main`) liegen — Dependabot liest sie nur von dort.
+
+### 7.4 Payload-Advisories
+
+Payload-Sicherheitslücken (z. B. Pre-Auth Account Takeover, `payload < 3.79.1`) werden per
+Patch-Bump gefixt. **Alle** `@payloadcms/*` **und** `payload` **gemeinsam** auf dieselbe Version
+heben (sonst Peer-Mismatch), dann `pnpm install` + kurzer `tsc --noEmit`/Build-Smoke.
+
+```bash
+# Aktuelle Findings + betroffene Pakete
+pnpm audit --prod
+# Danach package.json alle @payloadcms/* + payload auf die gepatchte Version, dann:
+pnpm install
+```
 
 ---
 
@@ -427,7 +506,8 @@ npx -y react-doctor@latest . --diff
 | CORS-Whitelist auf Produktionsdomain beschränkt                 | ☐        |
 | Security Headers aktiv (via `curl -I https://domain.at` prüfen) | ☐        |
 | Payload Admin-Passwort geändert (kein Default)                  | ☐        |
-| `npm audit` ohne kritische Findings                             | ☐        |
+| `pnpm audit --prod --audit-level critical` grün (Gate in `nixpacks.toml`) | ☐        |
+| Dependabot aktiv (`.github/dependabot.yml` auf `main` + Alerts/Security-Updates im GitHub-UI an) | ☐        |
 | React Doctor ausgeführt (Security-/Lint-Findings abgearbeitet)  | ☐        |
 | MongoDB nicht öffentlich erreichbar (nur intern)                | ☐        |
 | Rate Limiting auf kritischen API-Routen                         | ☐        |
