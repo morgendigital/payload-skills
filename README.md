@@ -4,22 +4,33 @@ Collection of practical checklists and implementation notes for **Payload CMS** 
 
 ## Markdown files
 
+### Must have
+
+Foundation for **every** Payload + Next.js project: setup, deploy stability, security, performance, SEO, and core styling. Work through these on every project regardless of feature scope.
+
 | Document | What it covers |
 | -------- | -------------- |
 | [payload-start/description.md](payload-start/description.md) | Bootstrapping a new Payload site (target: **Dokploy on Hetzner**): upload limits, WebP/Sharp resize, **`@payloadcms/storage-s3`**, proxy/body limits for large files, then experimental two-step Next.js build. |
 | [image-optimization/description.md](image-optimization/description.md) | Serving images off-server via a shared **imgproxy** instead of the `next/image` optimizer (the self-hosted OOM/crash-loop cause): Dokploy **imgproxy + nginx-cache** Compose, **Cloudflare** settings (`Vary: Accept`, cache-everything, don't-cache-4xx, rate-limit), Next.js loader integration (`@morgendigital/next-imgproxy`) for the four render cases + SVG handling, plus the gotchas (no `f:auto`, loader in Server Components, absolute `getMediaUrl`, `unoptimized`). |
 | [server-actions-encryption/description.md](server-actions-encryption/description.md) | Fix for recurring **"Failed to find Server Action"** errors on self-hosted (Dokploy) deploys: Next.js regenerates the Server Action encryption key on every `next build`, so redeploys/open tabs/multi-instance break. Set a stable **`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`** (`openssl rand -base64 32`) in the Dokploy env (present at build), plus optional `deploymentId` for version-skew hard reloads. Dev noise is harmless. |
 | [security-check/description.md](security-check/description.md) | Pre-deployment security checklist for Next.js, Payload, and hosting: HTTP headers, env/secrets, CORS, rate limiting, file uploads, admin hardening, and infrastructure basics. |
-| [honey-pot-capcha/description.md](honey-pot-capcha/description.md) | Public Payload forms: **honeypot** field plus **ALTCHA** proof-of-work — challenge route, server-side verification, replay protection, and Server Actions before writing to Payload (`altcha` / `altcha-lib`, Next.js App Router). |
-| [tracking/description.md](tracking/description.md) | How GTM, tracking, and the cookie banner fit together: `c15t` consent manager, provider setup, categories, and central `pushTrackingEvent` behavior. |
+| [performance/description.md](performance/description.md) | Next.js performance cheat sheet: bundle analyzer, `serverExternalPackages`, `optimizePackageImports`, `dynamic()` code-splitting, ISR `revalidate`, image cache TTL + LCP `priority`, parallel/cached fetching (`cache()` / `unstable_cache`), on-demand revalidation (`revalidateTag` / `revalidatePath`), `<Suspense>` streaming, and Turbopack build cache — plus a per-project quick checklist. |
+| [seo/description.md](seo/description.md) | Onpage-SEO cheat sheet: why `@payloadcms/plugin-seo` leaves `meta.*` empty (auto-generate is a manual admin button) and the frontend fixes that clear the recurring crawler findings — **title fallback** (`meta.title \|\| doc.title`) for missing/duplicate `<title>`s, **canonical URLs** in `generateMeta` (with a `path` param for prefix collections like `/posts/…` plus `/` vs `/home` dedupe), the OpenGraph `url` `/`-bug, **required `Media.alt`**, plus `generateDescription`, sitemap/robots, and `metadataBase`/`lang`/H1 notes. |
+| [northlight-global-css/description.md](northlight-global-css/description.md) | Placeholder heading for global CSS variables in the Northlight Payload template (extend this file when documenting tokens). |
+| [tailwind-extended-merge/description.md](tailwind-extended-merge/description.md) | Why `cn()` in `src/utilities/ui.ts` uses **`extendTailwindMerge`** instead of plain `twMerge`: registering custom `@theme --text-*` tokens (e.g. `text-copy`, `text-h1`) in the right **class group** so tailwind-merge stops silently dropping font-size tokens that collide with `text-color` utilities — plus when to extend it for new tokens. |
+
+### Plugins
+
+Optional, self-contained feature modules — add them only when a project needs that specific capability.
+
+| Document | What it covers |
+| -------- | -------------- |
 | [keycloak/description.md](keycloak/description.md) | Keycloak + Payload + Better Auth: quick checklist for new URLs (`ORIGIN`, redirect URIs, logout) plus full Next.js guide — client setup, callbacks, strategies, Payload admin access, authorization, and code examples. |
 | [advanced-link/description.md](advanced-link/description.md) | CMS link system: Payload `link()` / `linkGroup()`, Lexical rich-text links, `CMSLink`, internal docs vs custom URLs, and **action** links (e.g. newsletter popup via custom events). |
 | [pop-up/description.md](pop-up/description.md) | Marketing popup and newsletter dialog: Payload globals (`popup`, `newsletterTexts`), layout wiring, Lenis, CMSLink actions, and the popup section block. |
-| [northlight-global-css/description.md](northlight-global-css/description.md) | Placeholder heading for global CSS variables in the Northlight Payload template (extend this file when documenting tokens). |
-| [tailwind-extended-merge/description.md](tailwind-extended-merge/description.md) | Why `cn()` in `src/utilities/ui.ts` uses **`extendTailwindMerge`** instead of plain `twMerge`: registering custom `@theme --text-*` tokens (e.g. `text-copy`, `text-h1`) in the right **class group** so tailwind-merge stops silently dropping font-size tokens that collide with `text-color` utilities — plus when to extend it for new tokens. |
-| [seo/description.md](seo/description.md) | Onpage-SEO cheat sheet: why `@payloadcms/plugin-seo` leaves `meta.*` empty (auto-generate is a manual admin button) and the frontend fixes that clear the recurring crawler findings — **title fallback** (`meta.title \|\| doc.title`) for missing/duplicate `<title>`s, **canonical URLs** in `generateMeta` (with a `path` param for prefix collections like `/posts/…` plus `/` vs `/home` dedupe), the OpenGraph `url` `/`-bug, **required `Media.alt`**, plus `generateDescription`, sitemap/robots, and `metadataBase`/`lang`/H1 notes. |
-| [performance/description.md](performance/description.md) | Next.js performance cheat sheet: bundle analyzer, `serverExternalPackages`, `optimizePackageImports`, `dynamic()` code-splitting, ISR `revalidate`, image cache TTL + LCP `priority`, parallel/cached fetching (`cache()` / `unstable_cache`), on-demand revalidation (`revalidateTag` / `revalidatePath`), `<Suspense>` streaming, and Turbopack build cache — plus a per-project quick checklist. |
+| [honey-pot-capcha/description.md](honey-pot-capcha/description.md) | Public Payload forms: **honeypot** field plus **ALTCHA** proof-of-work — challenge route, server-side verification, replay protection, and Server Actions before writing to Payload (`altcha` / `altcha-lib`, Next.js App Router). |
+| [tracking/description.md](tracking/description.md) | How GTM, tracking, and the cookie banner fit together: `c15t` consent manager, provider setup, categories, and central `pushTrackingEvent` behavior. |
 
 ## Folder layout
 
-Each skill-style folder is named after the topic; open the linked `description.md` for the full content.
+Each skill-style folder is named after the topic; open the linked `description.md` for the full content. Topics are grouped above into **Must have** (foundation for every project) and **Plugins** (optional feature modules).
