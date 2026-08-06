@@ -60,6 +60,15 @@ module.exports = {
 ```
 Nur Kür — der eigentliche Fix für *diesen* Fehler ist der Encryption Key oben.
 
+## Wenn der Prozess stirbt statt einen 500er zu werfen
+
+Ein unbekannter Action-Hash sollte **einen Request** mit 500 beenden, nicht den ganzen
+Container. Schmiert die App nach einem Deploy komplett ab, ist der Encryption Key meist
+nur der Auslöser, nicht die Ursache — dahinter steckt in der Regel ein **unhandled
+rejection** in einer Server Action oder das **Memory-Limit**. Server Actions konsequent in
+`try/catch` kapseln und beim Setup auf realistische Werte achten (z. B.
+`NODE_OPTIONS=--max-old-space-size=2048`, `experimental.cpus`).
+
 ## Checkliste
 
 - [ ] `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` einmal via `openssl rand -base64 32` erzeugen.
