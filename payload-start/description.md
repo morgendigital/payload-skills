@@ -19,9 +19,29 @@ Damit wird die Grenze beim Parsen der Anfrage durchgesetzt (Busboy/Payload-`uplo
 
 ### 1.2 WebP-Konvertierung
 
+> ⚠️ **`formatOptions` auf Collection-Ebene reicht nicht.** Es wandelt **nur die Hauptdatei** um.
+> Jede Größe in `imageSizes` braucht ihre **eigene** `formatOptions` — sonst behalten die Varianten
+> das Quellformat des Uploads. Und genau die Varianten liefert `next/image` aus, nicht das Original.
+> Hintergrund, Messwerte und Reparaturskript: [media-webp-variants](../media-webp-variants/description.md).
+
 **Datei:** `src/collections/Media.ts`
 
-- **`formatOptions: { format: 'webp' }`** – hochgeladene Bilder werden mit **Sharp** in **WebP** ausgegeben (zentrale Stelle für das Format der gespeicherten Bilder in dieser Collection).
+```ts
+const WEBP = { format: 'webp' as const, options: { quality: 76 } }
+
+upload: {
+  formatOptions: WEBP,                                      // Hauptdatei
+  imageSizes: [
+    { name: 'thumbnail', width: 300, formatOptions: WEBP }, // ← jede Größe einzeln
+    { name: 'small',     width: 600, formatOptions: WEBP },
+    // …
+  ],
+}
+```
+
+- **Hauptdatei:** `upload.formatOptions` – hochgeladene Bilder werden mit **Sharp** in **WebP** ausgegeben.
+- **Varianten:** `formatOptions` **je Eintrag** in `imageSizes`. Ohne diese Angabe erbt die Variante
+  nichts vom Collection-Level. Ein PNG-Upload erzeugt dann ein WebP-Original mit PNG-Ablegern.
 
 ### 1.3 Begrenzung der Bildabmessungen (keine „Riesen“-Originale)
 
@@ -36,11 +56,12 @@ Die **Original-Datei** in der Media-Collection wird damit beim Upload verkleiner
 
 ### Kurzüberblick (Todo 1)
 
-| Ziel           | Wo                  | Wie                                      |
-| -------------- | ------------------- | ---------------------------------------- |
-| Dateigröße cap | `payload.config.ts` | `limits.fileSize` + `abortOnLimit`       |
-| WebP           | `Media.ts`          | `formatOptions.format: 'webp'`           |
-| Max. Pixelmaße | `Media.ts`          | `resizeOptions` (Sharp, `fit: 'inside'`) |
+| Ziel                 | Wo                  | Wie                                                  |
+| -------------------- | ------------------- | ---------------------------------------------------- |
+| Dateigröße cap       | `payload.config.ts` | `limits.fileSize` + `abortOnLimit`                   |
+| WebP (Hauptdatei)    | `Media.ts`          | `upload.formatOptions`                               |
+| WebP (**Varianten**) | `Media.ts`          | `formatOptions` **je Eintrag** in `imageSizes` ⚠️     |
+| Max. Pixelmaße       | `Media.ts`          | `resizeOptions` (Sharp, `fit: 'inside'`)             |
 
 ## Todo 2: S3 Storage — `@payloadcms/storage-s3`
 
