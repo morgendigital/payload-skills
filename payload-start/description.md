@@ -144,3 +144,37 @@ Next.js kann den Build in Modi aufteilen, die **Kompilierung** und **Einbetten v
 Statt eines einzigen `next build` nutzt ihr **zwei** `next build`-Aufrufe mit unterschiedlichen Modi — nach Media-Defaults (Todo 1) und S3-Plugin (Todo 2) ist das der **Build-Schritt** (Todo 3). `NODE_OPTIONS=--no-deprecation` unterdrückt nur Lärm von veralteten Node-APIs während des Builds.
 
 **Reihenfolge:** In der Next.js-Doku und in vielen CI-/Docker-Beispielen ist **`compile` zuerst**, danach **`generate-env`** üblich. Die obige Zeile entspricht der gewünschten Projektvorgabe (`generate-env` → `compile`); wenn der Build fehlschlägt oder Env-Werte fehlen, mit der Reihenfolge **`compile` → `generate-env`** gegenprüfen. Modi sind an die **Next.js-Version** gebunden und können sich ändern.
+
+## Todo 4: Stabiler Server-Actions-Encryption-Key (Dokploy)
+
+**Datei:** Dokploy-Environment (Production) — **nicht** ins Repo committen
+
+Nach jedem Deployment kann es passieren, dass Browser-Tabs, die noch die alte App-Version geladen haben, plötzlich Fehler werfen oder die App komplett abschmiert. Ursache sind die **Server-Action-IDs**: Next.js vergibt beim Build pro Server Action einen Hash. Wenn sich diese IDs zwischen Builds ändern, schicken alte Clients Requests mit IDs, die der neue Server nicht mehr kennt.
+
+### Warum trifft uns das besonders hart
+
+Der **zweistufige Build** aus Todo 3 (`generate-env` → `compile`) kann zwischen den Phasen unterschiedliche Action-IDs erzeugen. Zusätzlich generiert Next.js **ohne** stabilen Encryption Key bei **jedem Build** einen neuen Key — damit ändern sich auch die verschlüsselten Action-Referenzen, und alte Clients laufen ins Leere.
+
+### Lösung — fixer Encryption Key
+
+Eine feste Env-Variable setzen, damit Action-IDs und Verschlüsselung über Builds **und** Server-Instanzen hinweg stabil bleiben:
+
+```env
+NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=<32-byte-base64-key>
+```
+
+Key generieren (einmalig):
+
+```bash
+openssl rand -base64 32
+```
+
+**Wichtig:**
+
+- Den **gleichen Wert** auf **allen** Server-Instanzen und über **alle** Deployments hinweg verwenden.
+- In Dokploy als Environment-Variable hinterlegen (Production), **nicht** in `.env` im Repo.
+- Nur ändern, wenn der Key bewusst rotiert werden soll — eine Rotation invalidiert alle in-flight Action-Referenzen alter Clients.
+
+### Crash statt 500er
+
+Eigentlich sollte ein unbekannter Action-Hash nur einen **500er pro Request** werfen, nicht den ganzen Prozess killen. Wenn die App nach einem Deploy komplett abschmiert, liegt das meist an einem **unhandled rejection** in einer Server Action oder am Memory-Limit. Beim Setup in `next.config.js` auf realistische Werte achten (z. B. `NODE_OPTIONS=--max-old-space-size=2048`, `experimental.cpus`) und Server Actions konsequent in `try/catch` kapseln.
