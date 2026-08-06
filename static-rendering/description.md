@@ -164,6 +164,41 @@ Beim Umbau mit prüfen:
 - **Zu grobe Purges.** `revalidatePath('/', 'layout')` bei jedem Doc-Save wirft die komplette
   statische Auslieferung weg — gezielte Pfade nehmen.
 
+### Die Media-Collection nicht vergessen
+
+Der gefährlichste Fall, weil ein CDN ihn tagelang verdeckt: Prerenderte Seiten backen die
+Medien-URL **mit Dateinamen** ein. Wird eine Datei in Payload ersetzt, bekommt das Dokument
+einen neuen Dateinamen, die alte Datei verschwindet aus dem Bucket — und jede Seite, die noch
+auf den alten Namen zeigt, liefert einen 404. Nur eben nicht sofort: Solange der CDN-Eintrag
+lebt, wird die längst gelöschte Datei weiter ausgeliefert. An northlight.at genau so passiert,
+Cloudflare hätte den Bruch noch gut zwei Stunden kaschiert.
+
+Das Template liefert für `media` **gar keine Hooks** mit. Prüfen lässt sich der Zustand von
+außen, weil ein Query-String den CDN-Cache umgeht — mit einer intakten Datei als Kontrolle:
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" "https://example.com/api/media/file/datei.mp4"        # 200 (CDN)
+curl -s -o /dev/null -w "%{http_code}\n" "https://example.com/api/media/file/datei.mp4?cb=1"   # 404 = Origin ist weg
+```
+
+Der Hook feuert nur bei **geändertem Dateinamen** — ein frischer Upload ist von keiner Seite
+referenziert, und eine Alt-Text-Änderung bewegt die Datei nicht. Welche Seiten eine Datei
+einbetten, lässt sich nicht ermitteln, deshalb hier ausnahmsweise der Layout-weite Purge:
+
+```ts
+export const revalidateMedia: CollectionAfterChangeHook = ({ doc, previousDoc, req: { context } }) => {
+  if (context.disableRevalidate) return doc
+
+  if (previousDoc?.filename && doc?.filename !== previousDoc.filename) {
+    revalidatePath('/[locale]', 'layout')
+  }
+
+  return doc
+}
+```
+
+Löschungen brechen Seiten genauso und purgen deshalb immer.
+
 ## Regel 5 — Prerender-Blocker außerhalb der Locale-Routen finden
 
 Jede statische Route ohne Params wird beim Build gerendert. Zieht ihr Layout ein Payload-Global
@@ -177,7 +212,8 @@ Regel 1 ist das kein Problem — nur beim Notausgang-Build fliegt es als
 2. `generateStaticParams` liefert **alle** dynamischen Segmente, inklusive Locale — auch auf
    Startseite und hartkodierten Routen.
 3. `revalidate` als Sicherheitsnetz (z. B. 3600), Aktualität kommt über die Payload-Hooks.
-4. Revalidierungs-Hooks auf interne Pfade + locale-gescopte Tags umstellen, Layout-Globals extra.
+4. Revalidierungs-Hooks auf interne Pfade + locale-gescopte Tags umstellen, Layout-Globals extra
+   — und die `media`-Collection nicht vergessen, die im Template ohne Hooks kommt.
 5. Build-Env vollständig: `DATABASE_URI(_BUILD)`, `PAYLOAD_SECRET`, `NEXT_PUBLIC_SERVER_URL` =
    Produktions-URL, Tracking-IDs.
 6. Nach dem ersten Deploy verifizieren:
