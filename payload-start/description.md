@@ -124,23 +124,71 @@ Auf **eigener Infrastruktur** entfällt das typische **Vercel-Limit** (~4,5 MB
 | Private Medien | Collection + Bucket-Policy | `access.read` streng; kein öffentlicher Bucket-Zugriff |
 | Sehr große Uploads / Entlastung App | Plugin optional | `clientUploads` + Bucket-CORS; Proxy-Body-Limit prüfen |
 
-## Todo 3: Production-Build — zweistufiger Next.js-Build (`experimental-build-mode`)
+## Todo 3: Production-Build — voller `next build` mit DB-Zugriff
 
 **Datei:** `package.json` → Skript `build`
 
-Ersetze ein einfaches `next build` durch eine **zweistufige** Pipeline (hier mit `cross-env` und unterdrückten Deprecation-Warnungen über `NODE_OPTIONS`):
+Nach Media-Defaults (Todo 1) und S3-Plugin (Todo 2) ist das der **Build-Schritt**. Es bleibt bei **einem** `next build` — der zweistufige `experimental-build-mode` rutscht in die Fallback-Zeile:
 
 ```json
-"build": "cross-env NODE_OPTIONS=--no-deprecation next build --experimental-build-mode generate-env && cross-env NODE_OPTIONS=--no-deprecation next build --experimental-build-mode compile"
+"build": "node scripts/build.mjs",
+"build:no-db": "cross-env NODE_OPTIONS=--no-deprecation next build --experimental-build-mode generate-env && cross-env NODE_OPTIONS=--no-deprecation next build --experimental-build-mode compile"
 ```
 
-### Warum zwei Schritte?
+### Warum nicht mehr zweistufig
 
-Next.js kann den Build in Modi aufteilen, die **Kompilierung** und **Einbetten von Umgebungsvariablen** voneinander trennen (experimentell):
+`generate-env` → `compile` ist ein **Build-ohne-Datenbank**-Modus. Er überspringt nicht nur das Prerendering, er schaltet den Route-Cache komplett ab: Alle Routen landen als `ƒ (Dynamic)` im Build-Output, `prerender-manifest.json` bleibt leer, und jede Anfrage rendert live aus Mongo — auch wenn im Code `export const revalidate = …` steht. An northlight.at gemessen (`/agency`, `next start`):
 
-- **`generate-env`** — Phase, in der **`NEXT_PUBLIC_*`** (und zugehörige Build-Zeit-Env) in die Bundles **eingebettet** werden, damit der Client die erwarteten öffentlichen Werte sieht.
-- **`compile`** — experimenteller **Compile**-Lauf; Next kann dabei **ohne** vorheriges Einbrennen von Env-Werten in Zwischenartefakte arbeiten, sodass reine Compile-Outputs **unabhängiger von konkreten Env-Werten** cachbar sind (sinnvoll für CI-Cache oder Docker-Layer).
+| Build | erste Anfrage | Folgeanfragen |
+| ----- | ------------- | ------------- |
+| `generate-env` → `compile` | ~330 ms, kein Cache-Header | ~330 ms, **kein Cache** |
+| voller `next build` | **11 ms**, `x-nextjs-cache: HIT` | **5 ms**, HIT |
 
-Statt eines einzigen `next build` nutzt ihr **zwei** `next build`-Aufrufe mit unterschiedlichen Modi — nach Media-Defaults (Todo 1) und S3-Plugin (Todo 2) ist das der **Build-Schritt** (Todo 3). `NODE_OPTIONS=--no-deprecation` unterdrückt nur Lärm von veralteten Node-APIs während des Builds.
+Der Fallback bleibt trotzdem im `package.json` stehen: Wenn die DB beim Bauen partout nicht erreichbar ist, kommt man damit durch ein Deployment — mit dem Wissen, dass die Seite dann ungecacht läuft.
 
-**Reihenfolge:** In der Next.js-Doku und in vielen CI-/Docker-Beispielen ist **`compile` zuerst**, danach **`generate-env`** üblich. Die obige Zeile entspricht der gewünschten Projektvorgabe (`generate-env` → `compile`); wenn der Build fehlschlägt oder Env-Werte fehlen, mit der Reihenfolge **`compile` → `generate-env`** gegenprüfen. Modi sind an die **Next.js-Version** gebunden und können sich ändern.
+### Was der volle Build voraussetzt
+
+- **DB-Zugriff auf der Build-Maschine.** Läuft der Build woanders als die Datenbank, braucht er eine eigene Adresse — dafür der `DATABASE_URI_BUILD`-Wrapper in `scripts/build.mjs` (Dokploy gibt Nixpacks denselben Variablensatz für Build und Laufzeit).
+- **Vollständige Build-Env**, insbesondere `NEXT_PUBLIC_SERVER_URL` mit der **Produktions-URL** — sie wird in `canonical` und `og:url` jeder prerenderten Seite eingebacken.
+- **Korrekte `generateStaticParams`** über alle dynamischen Segmente. Fehlt ein Elternsegment wie `[locale]`, prerendert Next **stillschweigend nichts** und der Build sieht trotzdem grün aus.
+- **Revalidierung auf internen Pfaden**, sonst bleiben die statischen Seiten nach einem Publish stehen.
+
+Schlägt der Build fehl, behält Dokploy den laufenden Container — das Risiko ist ein fehlgeschlagenes Deployment, keine kaputte Seite.
+
+`NODE_OPTIONS=--no-deprecation` unterdrückt weiterhin nur Lärm von veralteten Node-APIs; der Wrapper reicht ein von außen gesetztes `NODE_OPTIONS` (z. B. ein größeres Heap-Limit) durch, statt es zu überschreiben.
+
+**Die Details zu Params, Middleware-Rewrites, Revalidierung und der Build/Laufzeit-Trennung stehen in [static-rendering](../static-rendering/description.md).**
+
+## Todo 4: Stabiler Server-Actions-Encryption-Key (Dokploy)
+
+**Datei:** Dokploy-Environment (Production) — **nicht** ins Repo committen
+
+Nach jedem Deployment kann es passieren, dass Browser-Tabs, die noch die alte App-Version geladen haben, plötzlich Fehler werfen oder die App komplett abschmiert. Ursache sind die **Server-Action-IDs**: Next.js vergibt beim Build pro Server Action einen Hash. Wenn sich diese IDs zwischen Builds ändern, schicken alte Clients Requests mit IDs, die der neue Server nicht mehr kennt.
+
+### Warum trifft uns das besonders hart
+
+Der **zweistufige Build** (die Fallback-Zeile aus Todo 3, `generate-env` → `compile`) kann zwischen den Phasen unterschiedliche Action-IDs erzeugen. Zusätzlich generiert Next.js **ohne** stabilen Encryption Key bei **jedem Build** einen neuen Key — damit ändern sich auch die verschlüsselten Action-Referenzen, und alte Clients laufen ins Leere.
+
+### Lösung — fixer Encryption Key
+
+Eine feste Env-Variable setzen, damit Action-IDs und Verschlüsselung über Builds **und** Server-Instanzen hinweg stabil bleiben:
+
+```env
+NEXT_SERVER_ACTIONS_ENCRYPTION_KEY=<32-byte-base64-key>
+```
+
+Key generieren (einmalig):
+
+```bash
+openssl rand -base64 32
+```
+
+**Wichtig:**
+
+- Den **gleichen Wert** auf **allen** Server-Instanzen und über **alle** Deployments hinweg verwenden.
+- In Dokploy als Environment-Variable hinterlegen (Production), **nicht** in `.env` im Repo.
+- Nur ändern, wenn der Key bewusst rotiert werden soll — eine Rotation invalidiert alle in-flight Action-Referenzen alter Clients.
+
+### Crash statt 500er
+
+Eigentlich sollte ein unbekannter Action-Hash nur einen **500er pro Request** werfen, nicht den ganzen Prozess killen. Wenn die App nach einem Deploy komplett abschmiert, liegt das meist an einem **unhandled rejection** in einer Server Action oder am Memory-Limit. Beim Setup in `next.config.js` auf realistische Werte achten (z. B. `NODE_OPTIONS=--max-old-space-size=2048`, `experimental.cpus`) und Server Actions konsequent in `try/catch` kapseln.
