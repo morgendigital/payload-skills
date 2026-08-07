@@ -93,8 +93,25 @@ export default buildConfig({
 - **Resend:** Domain im Resend-Dashboard verifizieren (SPF + DKIM als DNS-Records), sonst
   landet alles im Spam. Ohne verifizierte Domain geht nur die Resend-Testadresse — die ist
   kein Go-Live-Zustand.
-- **Kunden-SMTP:** vor dem Go-Live eine echte Testmail an eine Adresse **außerhalb** der
-  Kundendomäne schicken (Gmail/Outlook) und im Header prüfen, ob SPF/DKIM `pass` liefern.
+- **Kunden-SMTP:** vor dem Go-Live eine echte Testmail verschicken und im Header prüfen, ob
+  SPF/DKIM `pass` liefern.
+
+### Testmails gehen an northlight.at — nicht an den Kunden
+
+**Empfänger jeder Testmail ist eine `@northlight.at`-Adresse**, auch wenn `EMAIL_NOTIFY_TO`
+in der Produktion längst auf das Kundenpostfach zeigt. Beim Testen für den Durchlauf
+umstellen (bzw. `to:` im Testskript hart setzen) und erst nach bestandenem Test auf die
+Kundenadresse zurückdrehen. Zwei Gründe:
+
+- **Der Kunde bekommt keine Testbewerbungen ins Postfach.** „Max Mustermann, Lebenslauf.pdf"
+  in der Karriere-Inbox erzeugt genau die Rückfragen, die niemand braucht — und im Zweifel
+  antwortet jemand darauf.
+- **Die Adresse liegt außerhalb der Sendedomäne.** Genau dafür ist der Test da: Läuft die
+  Mail über die Kundendomäne und landet im Postfach derselben Domäne, wird intern zugestellt
+  und SPF/DKIM/DMARC werden gar nicht erst bewertet — der Test sagt dann nichts aus.
+
+Im Rohtext der empfangenen Mail (`Authentication-Results`) müssen `spf=pass` und `dkim=pass`
+stehen. Mit Anhang testen, nicht nur mit einer leeren Nachricht.
 
 ### Kundenfrage im Kickoff
 
@@ -370,8 +387,10 @@ const buffer = Buffer.from(await res.Body!.transformToByteArray())
 - [ ] `email:` in `payload.config.ts` gesetzt — Resend als Default, `SMTP_HOST` schaltet auf
       Nodemailer um.
 - [ ] Kunde im Kickoff nach eigenem Mailserver gefragt; Antwort im Projektprotokoll.
-- [ ] Absenderdomain verifiziert (SPF + DKIM), Testmail an externes Postfach mit `pass` im
-      Header geprüft.
+- [ ] Absenderdomain verifiziert (SPF + DKIM), `spf=pass` / `dkim=pass` im Header der
+      empfangenen Testmail geprüft.
+- [ ] Testmails an eine **`@northlight.at`-Adresse**, nie an den Kunden — und nach dem Test
+      `EMAIL_NOTIFY_TO` wieder auf die Kundenadresse gestellt.
 - [ ] `replyTo` = Adresse aus dem Formular, `from` = eigene Domain.
 - [ ] Beide Adapter einmal gegengetestet — inklusive Anhang.
 - [ ] Eigene Collection für Einsendungen (`applications` / `form-submissions`), `create`
