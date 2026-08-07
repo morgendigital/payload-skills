@@ -383,6 +383,10 @@ export async function submitKontaktForm(formData: FormData) {
 3. Eigene Validierung und **`payload.create`**.
 4. Nur nach erfolgreichem Speichern: **`markAltchaPayloadConsumed(altchaPayload)`**.
 
+Was danach kommt — Einsendungs-Collection, Dateien in einer geschützten Upload-Collection
+(nicht `media`) und die Benachrichtigungsmail samt Anhängen —, steht in
+[form-submissions-email](../form-submissions-email/description.md).
+
 ---
 
 ## Checkliste für weitere Formulare

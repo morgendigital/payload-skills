@@ -242,6 +242,9 @@ const Users: CollectionConfig = {
    - Gleiches für **abgeleitete Größen** (`sizes`), falls genutzt.  
    - Prüfen, ob sensible Uploads in einer **eigenen Collection** mit strengerem `read` liegen (nicht in derselben wie öffentliche Bilder mit `read: () => true`).
 
+5. **Formular-Uploads**  
+   Dateien aus öffentlichen Formularen (Bewerbungen, Anfragen) gehören grundsätzlich in eine eigene, zugriffsgeschützte Collection — inklusive `uploadCollections` des Form-Builders. Vollständiges Setup samt Mailversand: [`form-submissions-email/description.md`](../form-submissions-email/description.md).
+
 ---
 
 ## 6. Rate Limiting
