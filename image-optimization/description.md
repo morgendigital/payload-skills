@@ -183,12 +183,10 @@ mit `IMGPROXY_ALLOWED_SOURCES=s3://` ist die Angriffsfläche gering.
 
 ### 3.1 Package (empfohlen)
 
-`@morgendigital/next-imgproxy` (GitHub Packages) kapselt Loader + Helper.
+`@morgendigital/next-imgproxy` kapselt Loader + Helper. Liegt **public auf npmjs**,
+also kein eigener Registry-Eintrag und kein Token nötig — weder lokal noch im
+Docker-Build:
 
-**`.npmrc`** im Projekt:
-```
-@morgendigital:registry=https://npm.pkg.github.com
-```
 ```bash
 pnpm add @morgendigital/next-imgproxy
 ```
@@ -272,6 +270,16 @@ Eine Loader-**Funktion** kann **nicht** über die Server→Client-Grenze überge
   `next.config` `remotePatterns` steht). Loader-Variante braucht das nicht.
 - **Cloudflare cacht 404** (verwaiste Bilder) — siehe Todo 2.2.
 - **SVG** nie durch den Optimizer/imgproxy rastern — direkt ausliefern.
+- **`createImgproxy()` wirft, wenn die Envs fehlen.** Ein `const imgproxy = createImgproxy()`
+  auf Modulebene reisst damit jedes Setup ohne `NEXT_PUBLIC_IMGPROXY_*` beim Import mit —
+  lokal, im Test, und im Build, wenn die Variable nur als Runtime-Env gesetzt ist. Deshalb im
+  Projekt-Adapter erst auf die Envs prüfen und sonst auf den bisherigen Pfad zurückfallen:
+
+  ```ts
+  const enabled = Boolean(process.env.NEXT_PUBLIC_IMGPROXY_URL && process.env.NEXT_PUBLIC_IMGPROXY_BUCKET)
+  const imgproxy = enabled ? createImgproxy() : null
+  export const imgproxyEnabled = enabled
+  ```
 
 ---
 
