@@ -143,6 +143,81 @@ Nebenwirkung, die man kennen sollte: Enthält `sizes` einen `vw`-Anteil, baut `n
 Originalen laufen dann alle Stufen auf dieselbe Datei hinaus — der Gewinn entsteht erst bei großen
 Bildern, und erst zusammen mit WebP-Varianten.
 
+### Im Website-Template sieht der Default responsiv aus — und ist wirkungslos
+
+Wer aus dem offiziellen `templates/website` startet, glaubt leicht, das Thema sei erledigt. In
+`src/components/Media/ImageMedia/index.tsx` steht dort:
+
+```ts
+const sizes = sizeFromProps
+  ? sizeFromProps
+  : Object.entries(breakpoints)
+      .map(([, value]) => `(max-width: ${value}px) ${value * 2}w`)
+      .join(', ')
+```
+
+Das erzeugt `(max-width: 1920px) 3840w, (max-width: 1536px) 3072w, …` — und ist als `sizes`
+ungültig. Erlaubt sind dort ausschließlich **CSS-Längen** (`100vw`, `33vw`, `377px`); `w` ist ein
+srcSet-Deskriptor und hat in `sizes` nichts verloren. Der Browser verwirft die unparsbaren Einträge
+und rechnet mit dem Spec-Fallback: **`100vw`**.
+
+Der Default ist damit kein eigener Fehlerfall, sondern **exakt der Fall aus dem Abschnitt oben** —
+nur getarnt. Es sieht nach breakpoint-abhängigem Sizing aus, verhält sich aber, als stünde da
+nichts. Das ist der eigentliche Ärger: Man sucht den `100vw`-Fall nicht, weil man ihn für gelöst
+hält.
+
+Nachgemessen in Chrome (Viewport 1440, DPR 2), gleiches srcSet `640…3840`, nur `sizes` variiert:
+
+| `sizes` | gewählter Kandidat |
+| --- | --- |
+| Template-Default (ungültig) | **3840w** |
+| `100vw` | **3840w** |
+| `33vw` | 1080w |
+
+Erste und zweite Zeile sind identisch — der Beleg, dass der Default nichts tut. Die dritte Zeile
+ist der Gewinn, um den es geht.
+
+> Zur Fehlersuche: `naturalWidth` allein taugt **nicht** als Beleg. Wird in einem Tab mit
+> zusammengeklapptem oder nicht gelayouteten Viewport gemessen, löst `100vw` auf 0 auf und der
+> Browser nimmt den kleinsten Kandidaten — das sieht aus wie ein Under-Fetch-Bug, ist aber ein
+> Messfehler. Immer gegen einen echten Viewport prüfen, oder direkt `currentSrc` vergleichen.
+
+**Prüfen** — in der Konsole der Live-Seite:
+
+```js
+[...document.images].filter(i => /\d\s*w\s*(,|$)/.test(i.getAttribute('sizes') || ''))
+```
+
+Jeder Treffer hat ein kaputtes `sizes` und lädt faktisch bildschirmbreit.
+
+**Beheben** — der Default gehört auf eine gültige Länge, und zwar auf die konservative:
+
+```ts
+// ehrliche Rückfallebene; Komponenten, die schmaler rendern, geben `size` an
+const sizes = sizeFromProps || '100vw'
+```
+
+Das ändert am Verhalten zunächst **nichts** — es macht nur sichtbar, was ohnehin passiert. Die
+Ersparnis entsteht erst dadurch, **jedem Aufruf seine Darstellungsbreite mitzugeben**. Im Template
+haben das von Haus aus die wenigsten. Bei bautenschutz.tirol (Payload 3.72, Next 15.4) waren es
+3 von 14:
+
+| Verwendung | `size` |
+| --- | --- |
+| Vollbild-Hero, vollbreiter Sektionshintergrund | `100vw` |
+| Content-Block in `container` (86rem, 2rem Padding) | `(max-width: 1376px) 100vw, 1312px` |
+| Zweispaltiges Layout | `(max-width: 1024px) 100vw, 50vw` |
+| Karte im 3-Spalten-Grid | `(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw` |
+| Logo in fester Box (`h-32`) | `128px` |
+
+Bei spaltenabhängigen Grids den Wert **neben** die Spaltendefinition legen und das im Kommentar
+festhalten — sonst wandert die eine Hälfte beim nächsten Umbau mit und die andere nicht:
+
+```tsx
+const gridCols  = { '3': 'grid-cols-1 md:grid-cols-2 lg:grid-cols-3' }
+const gridSizes = { '3': '(max-width: 768px) 100vw, (max-width: 1024px) 50vw, 33vw' }
+```
+
 ## Prüfen, ob eine Site betroffen ist
 
 ```js
