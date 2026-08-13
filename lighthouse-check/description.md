@@ -48,7 +48,7 @@ unter **Security → Bots**, ob ihr die JavaScript Detections wirklich braucht.
 | Kriterium | Grenze | Warum |
 | --------- | ------ | ----- |
 | SEO | **100** | Alles darunter sind Fehler im eigenen Markup, nie Fremdverschulden. |
-| Accessibility | **≥ 95** | Rechtliches Risiko; die Funde sind fast immer in Minuten behebbar. |
+| Accessibility | **≥ 95** | Rechtliches Risiko; die Funde sind fast immer in Minuten behebbar. **Untergrenze, kein Konformitätsnachweis** — Lighthouse prüft eine Teilmenge auf einer URL im Ausgangszustand. Der vollständige Check steht in [`accessibility/`](../accessibility/description.md). |
 | Best Practices | **≥ 90** | Ausnahme dokumentieren, wenn GTM/gtag die Privacy-Sandbox-APIs melden. |
 | LCP (mobil) | **≤ 2,5 s** | Core Web Vital. |
 | CLS | **≤ 0,1** | Core Web Vital. |
