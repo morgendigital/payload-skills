@@ -85,9 +85,14 @@ pnpm payload run src/scripts/regenerateMediaVariants.ts
 # ein einzelnes Dokument, echt
 APPLY=1 MEDIA_ID=<id> pnpm payload run src/scripts/regenerateMediaVariants.ts
 
-# alles
-APPLY=1 pnpm payload run src/scripts/regenerateMediaVariants.ts
+# in Batches, gedrosselt — so gehört es gegen Produktion gefahren
+nice -n 19 ionice -c 3 env APPLY=1 LIMIT=100 \
+  pnpm payload run src/scripts/regenerateMediaVariants.ts
 ```
+
+> **Nie ungedrosselt über den Gesamtbestand gegen Produktion.** Genau das hat am 17.08.2026 einen
+> Server lahmgelegt — warum, und was am Skript dagegen gesetzt ist, steht unter
+> [Wie dieses Skript einen Server lahmgelegt hat](#wie-dieses-skript-einen-server-lahmgelegt-hat-17082026).
 
 Läuft **lokal gegen die Produktion**: DB über SSH-Tunnel, Speicher über die `S3_*`-Variablen der
 lokalen `.env`. Die Originaldatei wird über HTTP von `MEDIA_SOURCE` geholt, damit es gleich
@@ -98,6 +103,85 @@ ssh -fN -L 27018:localhost:27017 user@server
 APPLY=1 DATABASE_URL="mongodb://127.0.0.1:27018/<db>?directConnection=true" \
   pnpm payload run src/scripts/regenerateMediaVariants.ts
 ```
+
+## Wie dieses Skript einen Server lahmgelegt hat (17.08.2026)
+
+Der Reparaturlauf über den Gesamtbestand hat einen Produktionsserver unerreichbar gemacht: Disk-Reads
+am Anschlag, RAM voll, CPU auf allen Kernen — und im Monitoring **kaum Netzwerk-Traffic**, weshalb
+zunächst niemand den Bildtransfer verdächtigt hat. Drei Verstärker im Skript, die sich multipliziert
+haben:
+
+**1. `limit: 0, pagination: false` lädt die ganze Collection in den Speicher.** Bei ein paar tausend
+Dokumenten ist das ein großer Allokationsblock, und Mongo liest dafür die Collection komplett von
+Platte — genau die Read-IOPS, die ohne Netzwerklast auftraten. Statt dessen seitenweise laden:
+
+```ts
+const { docs, hasNextPage } = await payload.find({
+  collection: 'media',
+  limit: 100,
+  page,
+  depth: 0,
+  sort: 'createdAt',            // stabile Reihenfolge, während der Loop schreibt
+  select: { filename: true, mimeType: true, sizes: true },
+  overrideAccess: true,
+})
+```
+
+`sort` und `select` sind kein Beiwerk: ohne feste Sortierung kann ein Dokument beim Schreiben
+zwischen Seiten wandern, ohne `select` liefert Mongo jedes Dokument vollständig aus.
+
+**2. Der Kandidaten-Loop lädt alle Kandidaten, nicht den ersten passenden.** Betrifft die Variante,
+die das Original direkt aus S3 holt (`fetchFromS3`, `candidateKeys`): bricht die Schleife nur ab,
+wenn der Key **exakt** `doc.filename` entspricht, wird sie bei jedem Bild mit Derivaten bis zum Ende
+durchlaufen. Bei ~5 Größen × 4 Endungen sind das bis zu **20 GetObject-Calls pro Bild**, deren Buffer
+alle gleichzeitig im RAM liegen, bevor sortiert wird. Das war der eigentliche Speicherfresser. Beim
+ersten Treffer zurückgeben:
+
+```ts
+for (const key of keys) {
+  try {
+    const res = await s3Client.send(new GetObjectCommand({ Bucket: bucket, Key: key }))
+    return { buffer: Buffer.from(await res.Body.transformToByteArray()), key }
+  } catch {
+    continue
+  }
+}
+```
+
+Und die Keys vorher nach Wahrscheinlichkeit sortieren — Original zuerst, dann `.webp`. Dann trifft
+der erste Versuch fast immer. Die HTTP-Variante in
+[`regenerateMediaVariants.ts`](./regenerateMediaVariants.ts) hat das Problem nicht, weil sie genau
+eine URL abruft.
+
+**3. `payload.update` mit `file` fährt pro Dokument die komplette Sharp-Pipeline hoch** — sieben
+Größen, und Sharp nimmt per Default einen Thread pro Kern (auf der Maschine: 12). Ganz oben im
+Skript drosseln:
+
+```ts
+import sharp from 'sharp'
+sharp.concurrency(2)
+```
+
+### So wird es aufgerufen
+
+```bash
+nice -n 19 ionice -c 3 env APPLY=1 LIMIT=100 \
+  pnpm payload run src/scripts/regenerateMediaVariants.ts
+```
+
+`nice`/`ionice` stellen den Lauf hinter alles andere auf der Maschine, `LIMIT` gab es schon: in
+Batches von 100 laufen lassen statt über alles. Das Skript legt zusätzlich eine kurze Pause zwischen
+den Dokumenten ein (`PAUSE_MS`, Default 200 ms) und begrenzt die Seitengröße (`PAGE_SIZE`,
+Default 100).
+
+Es dauert damit deutlich länger — der Server bleibt dafür erreichbar. Wer den Vollauf ohne
+Drosselung braucht, macht das auf einer Maschine, auf der gerade niemand arbeitet.
+
+> Nachtrag zur Fehlersuche: Dass im Monitoring kein Netzwerk zu sehen war, heißt nicht, dass keine
+> Objekte geladen wurden. Zeigt `S3_ENDPOINT` auf ein MinIO hinter dem eigenen Reverse Proxy oder
+> einem lokalen Cache, geht ein Teil nie über `eth0` — und `sar` mit 12-Minuten-Intervallen mittelt
+> Spitzen ohnehin weg. Die Disk-Reads passten dagegen exakt zum Collection-Scan plus den
+> Sharp-Zwischenbuffern.
 
 ## Zwei Fallen, die beide Blut gekostet haben
 
