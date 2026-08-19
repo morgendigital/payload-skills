@@ -264,7 +264,15 @@ echte Formular auf der Live-Seite einmal absenden, mit Anhang.
 
 **Alarm:** Erst die Vorschau (`pnpm test:email-alert` rendert das Template, ohne zu senden),
 dann der echte Pfad — `pnpm test:email-alert --send` oder `SMTP_PASS` temporär verfälschen und
-das Formular absenden. Die Alarmmail muss bei `office@northlight.at` liegen. Direkt danach ein zweites Mal absenden → **keine** zweite Mail
+das Formular absenden. Die Alarmmail muss bei `office@northlight.at` liegen.
+
+Die Drosselung gehört mitgetestet, und zwar **im selben Prozess**: Der Zähler ist prozesslokal,
+zwei Skriptaufrufe sind zwei Prozesse und erzeugen zwei Mails, ohne etwas zu beweisen. Deshalb
+gibt `reportEmailFailure` ein Ergebnis zurück (`sent` / `throttled` / `skipped` / `failed`) und
+das Testskript ruft zweimal auf — beim zweiten Mal mit veränderter Server-ID in der Meldung,
+damit auch die Normalisierung des Ursachen-Keys geprüft ist. Erwartet: `sent`, dann `throttled`.
+Der Versandpfad selbst wertet den Rückgabewert nicht aus; ein fehlgeschlagener Alarm darf nichts
+weiter auslösen. Direkt danach ein zweites Mal absenden → **keine** zweite Mail
 (Drosselung greift). Anschließend Passwort zurücksetzen und den Versand erneut prüfen.
 
 ---
@@ -282,6 +290,5 @@ das Formular absenden. Die Alarmmail muss bei `office@northlight.at` liegen. Dir
 - [ ] Alarmtemplate als React Email neben den Formularmails, HTML **und** Plaintext gerendert.
 - [ ] `RESEND_API_KEY` und `RESEND_FROM_EMAIL` in Dokploy gesetzt, Absenderdomain in Resend
       verifiziert.
-- [ ] Alarm mit falschem Passwort provoziert, Mail kam an, zweiter Versuch löste keine
-      zweite Mail aus.
+- [ ] Alarm provoziert, Mail kam an; zweiter Aufruf im selben Prozess lieferte `throttled`.
 - [ ] Nach jedem Providerwechsel: Verify, Testversand und Alarm erneut durchlaufen.
