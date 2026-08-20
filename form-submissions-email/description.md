@@ -123,6 +123,12 @@ Diagnoseausgaben treffen.
   kein Go-Live-Zustand.
 - **Kunden-SMTP:** vor dem Go-Live eine echte Testmail verschicken und im Header prüfen, ob
   SPF/DKIM `pass` liefern.
+- **Feldname bei Resend:** Die REST-API erwartet **`reply_to`** (snake_case). `replyTo` ist für
+  sie ein unbekanntes Feld — die Anfrage wird trotzdem mit `200` und einer Message-ID quittiert,
+  die Mail geht nur ohne Antwortadresse raus. Kein Fehler, kein Log, monatelang unbemerkt.
+  Gegenprobe: einmal mit ungültigem Wert senden; kommt `422 Invalid reply_to field` zurück,
+  wird das Feld tatsächlich ausgewertet. Wer `payload.sendEmail` bzw. den Resend-Adapter nutzt,
+  ist davon nicht betroffen — die mappen selbst.
 
 ### Testmails gehen an northlight.at — nicht an den Kunden
 
