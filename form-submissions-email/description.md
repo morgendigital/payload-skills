@@ -85,6 +85,34 @@ export default buildConfig({
 | `SMTP_PORT` | 587 (STARTTLS) oder 465 (implizites TLS) |
 | `SMTP_USER` / `SMTP_PASSWORD` | Zugangsdaten des Kundenpostfachs — nie ins Repo, nie `NEXT_PUBLIC_*` |
 
+### Falle: nie auf `SMTP_HOST` gaten
+
+Der Umschalter oben funktioniert nur, solange **niemand sonst** `SMTP_HOST` abfragt. Der
+naheliegende Wächter vor dem Versand —
+
+```ts
+if (process.env.SMTP_HOST) {        // FALSCH
+  await payload.sendEmail({ … })
+}
+```
+
+— hebelt ihn genau dann aus, wenn er gebraucht wird: Beim Wechsel auf Resend wird `SMTP_HOST`
+entfernt, und ab da verschickt die App **gar nichts mehr**. Ohne Fehler, ohne Log, ohne
+`mailStatus: 'failed'` — die Bedingung ist schlicht falsch. Gemessen in `lamedica`: Die
+Umstellung auf Resend hätte beide Formularrouten stillgelegt.
+
+Die Frage ist nicht „ist SMTP konfiguriert", sondern „gibt es überhaupt einen Versandweg":
+
+```ts
+export function isEmailConfigured(): boolean {
+  return Boolean(process.env.SMTP_HOST) || Boolean(process.env.RESEND_API_KEY)
+}
+```
+
+Dasselbe gilt für Testskripte und Preview-Routen, die vorab prüfen, ob sie senden dürfen.
+`grep -rn 'process.env.SMTP_HOST' src` sollte nach dem Umbau nur noch den Adapter und die
+Diagnoseausgaben treffen.
+
 ### Absender, SPF/DKIM/DMARC
 
 - **From ist nie die Adresse des Absenders des Formulars.** Wer `from: bewerber@gmx.at` setzt,
@@ -386,6 +414,8 @@ const buffer = Buffer.from(await res.Body!.transformToByteArray())
 
 - [ ] `email:` in `payload.config.ts` gesetzt — Resend als Default, `SMTP_HOST` schaltet auf
       Nodemailer um.
+- [ ] Kein Gate auf `process.env.SMTP_HOST` außerhalb des Adapters (`grep -rn` gegengeprüft) —
+      sonst schaltet der Wechsel auf Resend den Versand still ab.
 - [ ] Kunde im Kickoff nach eigenem Mailserver gefragt; Antwort im Projektprotokoll.
 - [ ] Absenderdomain verifiziert (SPF + DKIM), `spf=pass` / `dkim=pass` im Header der
       empfangenen Testmail geprüft.

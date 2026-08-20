@@ -291,4 +291,6 @@ weiter auslösen. Direkt danach ein zweites Mal absenden → **keine** zweite Ma
 - [ ] `RESEND_API_KEY` und `RESEND_FROM_EMAIL` in Dokploy gesetzt, Absenderdomain in Resend
       verifiziert.
 - [ ] Alarm provoziert, Mail kam an; zweiter Aufruf im selben Prozess lieferte `throttled`.
-- [ ] Nach jedem Providerwechsel: Verify, Testversand und Alarm erneut durchlaufen.
+- [ ] Nach jedem Providerwechsel: Verify, Testversand und Alarm erneut durchlaufen — und
+      geprüft, dass kein Gate auf `SMTP_HOST` den neuen Weg aussperrt (siehe
+      [form-submissions-email](../form-submissions-email/description.md#falle-nie-auf-smtp_host-gaten)).
