@@ -280,10 +280,35 @@ weiterleiten.
       Block-/Nav-Link.
 - [ ] OG-Bild ist **tatsächlich populiert** (1200×630), nicht überall das nie ersetzte
       Default-Bild — Ursache in der Regel der `depth`-Bug aus seo-meta-check.
+**Sitemap-Vollständigkeit — in beide Richtungen prüfen:**
+
+Volle Anleitung in [seo Abschnitt 6](../seo/description.md#6-sitemap--jede-öffentlich-geroutete-collection-braucht-ihren-eigenen-eintrag).
+Der Punkt rutscht in beide Richtungen durch — neue Collection ohne Sitemap-Eintrag **und**
+alte Sitemap-Route, die eine längst gelöschte Collection referenziert:
+
 - [ ] `curl https://domain.at/robots.txt | grep -i sitemap` — jede Collection mit öffentlicher
-      Route hat ihren eigenen Sitemap-Eintrag, alle Locales enthalten; `<loc>`-Anzahl grob gegen
-      die Zahl veröffentlichter Dokumente geprüft. `/admin` und `/api` ausgeschlossen, sonst
-      **kein** `Disallow: /` auf dem Rest.
+      `[slug]`-Route hat ihren eigenen Sitemap-Eintrag, alle Locales enthalten; `<loc>`-Anzahl
+      grob gegen die Zahl veröffentlichter Dokumente geprüft. `/admin` und `/api`
+      ausgeschlossen, sonst **kein** `Disallow: /` auf dem Rest.
+- [ ] **Rückwärts abgleichen:** alle Collections aus `payload.config.ts` mit öffentlicher
+      `[slug]`-Route gegen die vorhandenen `<slug>-sitemap.xml`-Routen und die Einträge in
+      `additionalSitemaps` (`next-sitemap.config.cjs`) halten — jede Collection mit Route muss
+      dort auftauchen, keine darf fehlen.
+- [ ] **Verwaiste Sitemap-Routen nach dem Entfernen einer Collection:** wurde eine Collection
+      aus dem Projekt gelöscht oder umbenannt, bleibt ihre `<slug>-sitemap.xml`-Route und der
+      `additionalSitemaps`-Eintrag oft stehen — die Route crasht dann beim `payload.find` gegen
+      einen unbekannten Collection-Slug, oder liefert leer weiter, während `robots.txt` sie
+      weiter bewirbt. Jeden Eintrag aus `additionalSitemaps` einzeln aufrufen und prüfen, dass
+      er `200` mit echtem Inhalt liefert, nicht `404`/`500`.
+- [ ] `grep -rn "revalidateTag('.*-sitemap')" src/` gegen die tatsächlich existierenden
+      Sitemap-Routen halten — ein Tag ohne zugehörige Route (der `posts-sitemap`-Fund aus
+      seo.md) zeigt, dass beim Kopieren einer Collection der Sitemap-Teil vergessen wurde, oder
+      dass eine Collection entfernt wurde, ohne den Revalidate-Hook aufzuräumen.
+- [ ] **Sonstige neue Seiten/Blocks außerhalb des üblichen Collection-Rasters** (z. B.
+      Landingpages über eine eigene Route, ein neues Blog-artiges Feature, eine zusätzliche
+      Sprache) sind mit im Sitemap-Abgleich, nicht nur `pages` und `posts` — diese werden beim
+      schnellen Feature-Bau am ehesten vergessen, weil sie nicht über den normalen
+      Collection-Workflow laufen.
 - [ ] `Media.alt` auf den Stichprobenseiten gesetzt, keine leeren Alt-Texte.
 - [ ] Falls im Projekt vorhanden: `/admin/seo-check`-Dashboard einmal durchlaufen lassen, offene
       Findings vor Go-Live abgearbeitet oder bewusst akzeptiert.
@@ -321,7 +346,9 @@ weiterleiten.
 - [ ] Barrierefreiheits-Tastaturrundgang aus Todo 5 gemacht, inklusive Pfeiltasten-Navigation
       in zusammengesetzten Widgets und Cookie-Banner.
 - [ ] SEO-Stichprobe aus Todo 6 geprüft: Meta-Titel/-Description individuell, OG-Bild populiert,
-      Sitemap vollständig, `/admin/seo-check`-Findings abgearbeitet.
+      `/admin/seo-check`-Findings abgearbeitet.
+- [ ] Sitemap in beide Richtungen abgeglichen: keine Collection mit `[slug]`-Route fehlt, keine
+      Sitemap-Route/`revalidateTag` verweist noch auf eine gelöschte oder umbenannte Collection.
 - [ ] `/home` leitet per `301` auf `/` weiter (nicht nur Canonical), für alle Locales; kein
       interner bzw. Rich-Text-Link zeigt noch aktiv auf `/home`.
 - [ ] Bei Relaunch/Migration: alte URLs vor Abbau der Altsite gesichert, gezielt (nicht auf `/`)
