@@ -224,6 +224,38 @@ Sitemap-Pflicht pro Collection) und [seo-meta-check](../seo-meta-check/descripti
 (Meta-Defaults, OG-Bild-Auflösung, Admin-Dashboard). Vor Go-Live an einer Stichprobe
 (Start, 2 Detailseiten, 1 Landingpage) gegenprüfen:
 
+**Redirects von der alten Seite (bei Relaunch/Migration):**
+
+Ersetzt das Projekt eine bestehende Site — gleiche oder neue Domain, neue URL-Struktur —, ist
+das die Stelle, an der ohne Check am meisten verloren geht: eingesammelte Rankings, externe
+Backlinks und Lesezeichen laufen ins Leere, wenn alte URLs nicht auf die passende neue
+weiterleiten.
+
+- [ ] **Alte URL-Liste vor dem Abbau der alten Site sichern** — altes `sitemap.xml`, Google
+      Search Console (Abdeckung/Leistung → indexierte Seiten), Analytics-Landingpages. Danach
+      ist die Liste weg.
+- [ ] Jede alte URL bekommt eine gezielte Weiterleitung auf die **inhaltlich passende** neue
+      Seite — nicht pauschal alles auf `/`. Eine Sammel-Weiterleitung auf die Startseite verliert
+      praktisch die gesamte Linkkraft der Einzelseiten.
+- [ ] Umgesetzt entweder über `redirects()` in `next.config.js` (statisch, braucht Redeploy pro
+      Änderung) oder redaktionell über
+      [`@payloadcms/plugin-redirects`](https://payloadcms.com/docs/plugins/redirects) (Collection,
+      ohne Deployment pflegbar — sinnvoll, wenn nach Go-Live laufend 404-Funde aus der Search
+      Console nachgetragen werden).
+- [ ] Statuscode ist **`301`** (`permanent: true`), nicht `302` — ein temporärer Redirect
+      vererbt keine Rankings.
+- [ ] Stichprobe gegen die Produktions-URL, mit Redirect-Ziel:
+      ```bash
+      curl -sI https://domain.at/alter-pfad | grep -i "^HTTP\|^location"
+      ```
+      Erwartet: `HTTP/… 301` und ein `location`, das direkt auf die neue Seite zeigt — **kein**
+      Redirect-Chain (alt → Zwischenstation → neu) und keine Schleife.
+- [ ] Bei Domainwechsel zusätzlich in der Google Search Console die **Adressänderung**
+      hinterlegen, für beide Domains (alt und neu) verifiziert.
+- [ ] Alte, nicht mehr existierende URLs ohne sinnvolles Ziel liefern einen echten **404**
+      (nicht `200` auf eine leere Seite) — ein Soft-404 verwirrt Crawler stärker als ein
+      sauberer Fehlerstatus.
+
 - [ ] Jede Seite hat einen **individuellen** `meta.title` (30–60 Zeichen) und
       `meta.description` (70–160 Zeichen) — kein leerer und kein doppelter Wert.
 - [ ] Canonical-URL pro Seite korrekt, `/home` auf `/` normalisiert, Locale-Präfixe stimmen.
@@ -271,4 +303,6 @@ Sitemap-Pflicht pro Collection) und [seo-meta-check](../seo-meta-check/descripti
       in zusammengesetzten Widgets und Cookie-Banner.
 - [ ] SEO-Stichprobe aus Todo 6 geprüft: Meta-Titel/-Description individuell, OG-Bild populiert,
       Sitemap vollständig, `/admin/seo-check`-Findings abgearbeitet.
+- [ ] Bei Relaunch/Migration: alte URLs vor Abbau der Altsite gesichert, gezielt (nicht auf `/`)
+      per `301` weitergeleitet, stichprobenartig mit `curl -I` gegengeprüft, kein 404 vergessen.
 - [ ] Rundgang aus Todo 7 abgehakt.
