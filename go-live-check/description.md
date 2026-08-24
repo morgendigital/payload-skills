@@ -149,6 +149,26 @@ Kund:in oder Anwalt:in.
       `experience`/`functionality`, siehe tracking.md) decken sich mit den in der
       Datenschutzerklärung beschriebenen Anbietern.
 
+**Datei-Uploads aus Formularen (Lebensläufe, Bewerbungsunterlagen):**
+
+Volle Anleitung in
+[form-submissions-email Todo 2](../form-submissions-email/description.md#todo-2-sichere-datei-collection--niemals-media).
+Ein Bewerbungs-Upload unter derselben öffentlich lesbaren URL wie ein Bild aus der Bildergalerie
+ist der teuerste Fund, den dieser Check machen kann — deshalb hier nochmal explizit, nicht nur
+über den `security-check`-Verweis im Rundgang (Todo 7):
+
+- [ ] Uploads liegen in einer **eigenen Collection**, nicht in `media` — `media` hängt am
+      CDN/imgproxy und ist für jeden mit der URL lesbar.
+- [ ] `access.read` auf dieser Collection sperrt anonyme/öffentliche Requests; eine fremde
+      Bewerbungs-URL erraten reicht nicht für den Zugriff — einmal echt gegenprüfen (URL aus
+      einer eigenen Testeinsendung im Inkognito-Fenster ohne Login aufrufen → **kein** Zugriff).
+- [ ] Bei S3/R2 (`@payloadcms/storage-s3`): Bucket **privat**, keine Secrets in
+      `NEXT_PUBLIC_*`, `disablePayloadAccessControl` nur bei bewusst öffentlichen Assets gesetzt
+      (siehe [security-check](../security-check/description.md)).
+- [ ] Die Datei geht wie in Todo 2 oben beschrieben **immer als Anhang mit der Mail raus** —
+      der Kunde soll Bewerbungsunterlagen im Postfach haben, nicht sich ins Admin einloggen
+      müssen, um an eine private URL zu kommen.
+
 **Formular-Einwilligung (DSGVO-Checkbox):**
 
 Jedes Formular, das personenbezogene Daten entgegennimmt (Kontakt, Bewerbung, Rückruf,
@@ -243,6 +263,8 @@ Sitemap-Pflicht pro Collection) und [seo-meta-check](../seo-meta-check/descripti
       geprüft, SalesViewer-Sonderfall entschieden.
 - [ ] Impressum und Datenschutz erreichbar, verlinkt, für alle Locales vorhanden und inhaltlich
       deckungsgleich mit dem echten Tracking-/Formular-/Hosting-Setup.
+- [ ] Bewerbungs-/Formular-Uploads liegen in einer eigenen, zugriffsgeschützten Collection
+      (nie `media`), Bucket privat bei S3/R2, fremde URL ohne Login gegengeprüft.
 - [ ] Formulare mit personenbezogenen Daten haben eine nicht vorausgewählte, serverseitig
       geprüfte DSGVO-Einwilligungs-Checkbox mit Link auf die Datenschutzerklärung.
 - [ ] Barrierefreiheits-Tastaturrundgang aus Todo 5 gemacht, inklusive Pfeiltasten-Navigation
