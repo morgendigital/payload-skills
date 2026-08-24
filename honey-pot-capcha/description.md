@@ -45,9 +45,18 @@ export async function GET() {
 **Bekannte Falle: ALTCHA-Attributname.** `challengeurl` ist das **v2**-Attribut. Ab
 `altcha` **v3** heißt es **`challenge`** — `challengeurl` wird dort still
 ignoriert, das Widget fällt auf `""` zurück, holt die aktuelle Seite statt der
-Challenge-Route und meldet in der Konsole `Server responded with invalid
-content-type. Expected application/json, received text/html`. Vor jedem Einsatz
-die tatsächlich unterstützten Attribute am installierten Paket prüfen:
+Challenge-Route und meldet in der Konsole wortwörtlich:
+
+```
+ALTCHA verification failed: Server responded with invalid content-type.
+Expected application/json, received text/html; charset=utf-8.
+```
+
+Dieser Text ist der zuverlässigste Einstieg beim Debuggen — er zeigt sich
+identisch bei jedem Attribut-Mismatch, unabhängig vom Projekt. Vor jedem
+Einsatz die tatsächlich unterstützten Attribute am installierten Paket
+prüfen, statt der Doku im Kopf zu vertrauen (die Attributnamen ändern sich
+zwischen Majorversionen):
 
 ```js
 customElements.get("altcha-widget").observedAttributes;
@@ -453,6 +462,92 @@ Was danach kommt — Einsendungs-Collection, Dateien in einer geschützten Uploa
 
 ---
 
+## Test ohne Mailversand
+
+Die „Bekannte Falle" oben beschreibt, was ein Attribut-Mismatch **verursacht**.
+Das hier prüft aktiv, **ob** er gerade vorliegt — nach jedem Deploy, nach jedem
+`altcha`-Upgrade, nicht nur beim Lesen des Codes. Ein kaputter Spamschutz
+schlägt bei **jeder** Anfrage fehl, ohne dass es von selbst auffällt (siehe
+Vorfall oben) — die einzige Konversionsstrecke der Seite verdient einen
+aktiven Test, kein Vertrauen auf den letzten Blick in den Code.
+
+Seite im Browser öffnen, dann in der Konsole ausführen. Schritt 2 löst
+**keine** Mail aus, solange die Server Action erst nach der ALTCHA-Prüfung
+etwas verschickt (siehe „Reihenfolge in Server Actions" oben).
+
+**1. Sniff: Fragt das Widget wirklich die Challenge-Route ab?**
+
+Fängt exakt den Attribut-Mismatch aus der „Bekannten Falle" ab, unabhängig
+davon, ob die Ursache `challengeurl` vs. `challenge` ist oder ein Tippfehler
+im Pfad:
+
+```js
+(async () => { const calls=[]; const of=window.fetch;
+  window.fetch=async function(...a){ const u=a[0]?.url||String(a[0]); const r=await of.apply(this,a);
+    calls.push({u, status:r.status, ct:r.headers.get('content-type'), finalUrl:r.url}); return r; };
+  const w=document.querySelector('altcha-widget'); try{ await w.verify(); }catch(e){}
+  window.fetch=of; return JSON.stringify(calls); })()
+```
+
+Erwartet: ein Request auf die Challenge-Route mit `application/json`. Zeigt der
+Log stattdessen die aktuelle Seiten-URL mit `text/html`, liegt der
+Attribut-Mismatch vor.
+
+**2. Ganze Kette bis zur Serverprüfung, ohne das echte Formular zu benutzen:**
+
+Baut ein eigenes, unsichtbares Widget, löst es und schickt das Token direkt an
+die Guard-Logik. Setzt eine dedizierte Guard-Route voraus (Muster:
+`/api/form-guard`, siehe `Form/Component.tsx`-Variante deines Projekts); bei
+reiner Server-Action-Kopplung (Variante A/B oben) ersatzweise gegen eine
+Test-Route mit derselben `verifyAltcha`-Logik prüfen.
+
+```js
+(async () => { const el=document.createElement('altcha-widget');
+  el.setAttribute('challenge','/api/altcha'); el.setAttribute('name','altcha');
+  el.style.display='none'; document.body.appendChild(el);
+  await new Promise(r=>setTimeout(r,300)); await el.verify();
+  const val=el.querySelector('input[name=altcha]').value; el.remove();
+  const r=await fetch('/api/form-guard',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({altcha: val, contact_time: ''})});
+  return JSON.stringify({status:r.status, body: await r.text()}); })()
+```
+
+Erwartet: `{"status":200,"body":"{\"success\":true}"}`. Kommt stattdessen ein
+Fehler zur Verifizierung, passen Widget-Payload und `ALTCHA_HMAC_KEY` auf dem
+Server nicht zusammen (z. B. Key zwischen Build- und Runtime-Umgebung
+unterschiedlich gesetzt).
+
+**3. Challenge-Route direkt, unabhängig vom Browser:**
+
+```bash
+curl -si https://deine-domain.tld/api/altcha | head -20
+```
+
+Erwartet: `200` und `content-type: application/json`.
+
+**Nach dem Deploy zusätzlich das ausgelieferte Markup prüfen** — der Build ist
+erst dann wirklich drüben, wenn das Attribut stimmt:
+
+```bash
+curl -s https://deine-domain.tld/pfad-mit-formular | grep -o 'challenge[a-z]*="[^"]*"'
+```
+
+Erwartet: `challenge="..."` (nicht `challengeurl=`). Danach Schritt 1 und 2 gegen
+die Live-Seite wiederholen — ein lokal funktionierender Build sagt nichts
+darüber, ob derselbe Fehler nach dem Deploy erneut auftritt (z. B. weil eine
+andere `altcha`-Version installiert wurde).
+
+**Lokal:** `verifyAltcha` lässt ohne gesetzten `ALTCHA_HMAC_KEY` in Development
+alles durch (siehe Hilfsfunktion oben) — ohne den Key testet man also die
+Abwesenheit des Schutzes, nicht seine Funktion. Vor einem lokalen Test prüfen,
+ob der Key in der `.env` steht.
+
+Ein echter Absendetest (durchs sichtbare Formular, mit Klick auf Absenden)
+löst dagegen eine echte Mail aus. Den nur bewusst, mit erkennbarem Testtext,
+und nach Rücksprache mit dem Team machen.
+
+---
+
 ## Checkliste für weitere Formulare
 
 1. `Honeypot` im `<form>`; Name `contact_time` oder Hilfsfunktion anpassen.
@@ -460,3 +555,4 @@ Was danach kommt — Einsendungs-Collection, Dateien in einer geschützten Uploa
 3. Server Action: Honeypot (zeitbasiert) → ALTCHA → Logik → `markAltchaPayloadConsumed`.
 4. `ALTCHA_HMAC_KEY` in jeder Umgebung setzen.
 5. Honeypot nie auf reine Vorhandensein-Prüfung zurückbauen — siehe „Bekannte Falle" oben.
+6. Nach jedem Deploy und jedem `altcha`-Upgrade: Testroutine oben durchlaufen, bevor der erste echte Nutzer die Formulare erreicht.
