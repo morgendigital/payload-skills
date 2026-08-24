@@ -42,7 +42,18 @@ export async function GET() {
 }
 ```
 
-`challengeurl` im Widget muss zu dieser Route passen (hier z. B. `/api/altcha`).
+**Bekannte Falle: ALTCHA-Attributname.** `challengeurl` ist das **v2**-Attribut. Ab
+`altcha` **v3** heißt es **`challenge`** — `challengeurl` wird dort still
+ignoriert, das Widget fällt auf `""` zurück, holt die aktuelle Seite statt der
+Challenge-Route und meldet in der Konsole `Server responded with invalid
+content-type. Expected application/json, received text/html`. Vor jedem Einsatz
+die tatsächlich unterstützten Attribute am installierten Paket prüfen:
+
+```js
+customElements.get("altcha-widget").observedAttributes;
+```
+
+Das Attribut im Widget muss zur Challenge-Route passen (hier z. B. `/api/altcha`).
 
 ---
 
@@ -94,9 +105,18 @@ export function markAltchaPayloadConsumed(payload: string | null): void {
   consumedPayloads.set(trimmed, Date.now());
 }
 
-export function isHoneypotFilled(formData: FormData): boolean {
-  const value = formData.get("contact_time");
-  return typeof value === "string" && value.length > 0;
+const MIN_FILL_TIME_MS = 1500;
+
+export function isLikelyBotSubmission(contactTimeRaw: unknown): boolean {
+  if (typeof contactTimeRaw !== "string" || contactTimeRaw === "") return false;
+
+  const mountedAt = Number(contactTimeRaw);
+  if (!Number.isFinite(mountedAt) || mountedAt <= 0) return false;
+
+  const elapsed = Date.now() - mountedAt;
+  if (elapsed < 0 || elapsed > 24 * 60 * 60 * 1000) return false;
+
+  return elapsed < MIN_FILL_TIME_MS;
 }
 ```
 
@@ -104,28 +124,72 @@ Hinweis: Die Map lebt im Speicher der einen Node-Prozesses — bei horizontaler 
 
 ---
 
+## Bekannte Falle: Honeypot als reine Vorhandensein-Prüfung
+
+**Live-Vorfall (karlingerhof.at, August 2026):** `isHoneypotFilled` prüfte
+ursprünglich nur, ob das versteckte Feld überhaupt einen Wert hatte — jeder
+Wert galt als Bot. Browser-Passwortmanager (1Password, Bitwarden, Safari)
+tragen in solche Felder aber trotzdem Text ein; `autocomplete="off"` wird dafür
+seit Jahren ignoriert. Ein echter Gast mit aktivem Passwortmanager bekam die
+Erfolgsmeldung angezeigt — Server Actions geben bei Honeypot-Treffer bewusst
+`{ success: true }` zurück, damit Bots nichts merken (siehe unten) — obwohl
+nichts gespeichert und keine Mail verschickt wurde. Da Honeypot-Treffer
+absichtlich **nicht** persistiert werden, tauchte das nirgends auf: kein
+Log, kein Datenbankeintrag, keine fehlgeschlagene Mail. Nur eine
+zurückgemeldete Nutzerbeschwerde ("Anfrage gesendet, nie angekommen") hat es
+sichtbar gemacht.
+
+**Fix:** zeitbasiert statt Vorhandensein-basiert (siehe `isLikelyBotSubmission`
+oben plus `Honeypot`-Komponente unten). Das Feld trägt jetzt einen
+Mount-Zeitpunkt, den JavaScript erst nach dem Hydratisieren setzt. Nur ein
+Wert, der eindeutig "vor wenigen Millisekunden gesetzt" bedeutet, gilt als
+Bot — leere Werte (kein JS gelaufen) und unlesbarer Text (z. B. von einem
+Passwortmanager) lassen die Prüfung bewusst durch. Ein Bot ganz ohne JS fällt
+stattdessen über ALTCHA, das ebenfalls JS braucht — die Zeitprüfung verliert
+dadurch keine Abdeckung, nur die False-Positive-Quelle.
+
+---
+
 ## Komponente: Honeypot
 
-Feldname **`contact_time`** muss zu `isHoneypotFilled` passen.
+Feldname **`contact_time`** muss zu `isLikelyBotSubmission` passen. Der
+Zeitstempel wird erst nach dem Mounten per Effekt gesetzt, nicht als
+`defaultValue` — sonst würde die Uhrzeit des Server-Renders im HTML landen,
+und `Date.now() - mountedAt` bei jedem Submit einen Wert zeigen, der die
+tatsächliche Ausfüllzeit unterschätzt (der Effekt läuft ohnehin erst nach der
+Hydration, ein `defaultValue` mit `Date.now()` würde zudem denselben
+Zeitstempel serverseitig einfrieren und bei jedem Seitenaufruf für alle
+Besucher identisch — und damit nutzlos — machen).
 
 ```tsx
-import React from "react";
+"use client";
 
-export const Honeypot: React.FC = () => (
-  <div
-    aria-hidden="true"
-    className="absolute overflow-hidden"
-    style={{ left: "-9999px" }}
-  >
-    <input
-      type="text"
-      name="contact_time"
-      tabIndex={-1}
-      autoComplete="off"
-      defaultValue=""
-    />
-  </div>
-);
+import React, { useEffect, useState } from "react";
+
+export const Honeypot: React.FC = () => {
+  const [mountedAt, setMountedAt] = useState("");
+
+  useEffect(() => {
+    setMountedAt(String(Date.now()));
+  }, []);
+
+  return (
+    <div
+      aria-hidden="true"
+      className="absolute overflow-hidden"
+      style={{ left: "-9999px" }}
+    >
+      <input
+        type="text"
+        name="contact_time"
+        tabIndex={-1}
+        autoComplete="off"
+        value={mountedAt}
+        readOnly
+      />
+    </div>
+  );
+};
 ```
 
 Das umgebende `<form>` sollte `position: relative` haben, damit die absolute Positionierung des Wrappers passt.
@@ -157,7 +221,7 @@ export const AltchaWidget: React.FC<AltchaWidgetProps> = ({
   return (
     <altcha-widget
       ref={widgetRef}
-      challengeurl="/api/altcha"
+      challenge="/api/altcha"
       auto={auto}
       style={{ display: "none" }}
     />
@@ -261,13 +325,13 @@ Nach fehlgeschlagenem Submit: `altchaPayloadRef.current = null` und ggf. erneut 
 import { getPayload } from "payload";
 import configPromise from "@payload-config";
 import {
-  isHoneypotFilled,
+  isLikelyBotSubmission,
   markAltchaPayloadConsumed,
   verifyAltcha,
 } from "./altcha";
 
 export async function submitFormBuilderForm(formData: FormData) {
-  if (isHoneypotFilled(formData)) {
+  if (isLikelyBotSubmission(formData.get("contact_time"))) {
     return { success: true };
   }
 
@@ -339,13 +403,13 @@ const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
 import { getPayload } from "payload";
 import configPromise from "@payload-config";
 import {
-  isHoneypotFilled,
+  isLikelyBotSubmission,
   markAltchaPayloadConsumed,
   verifyAltcha,
 } from "./altcha";
 
 export async function submitKontaktForm(formData: FormData) {
-  if (isHoneypotFilled(formData)) {
+  if (isLikelyBotSubmission(formData.get("contact_time"))) {
     return { success: true };
   }
 
@@ -378,7 +442,7 @@ export async function submitKontaktForm(formData: FormData) {
 
 ## Reihenfolge in Server Actions (immer gleich)
 
-1. **`isHoneypotFilled`** → bei Treffer **`{ success: true }`** zurückgeben (Bot merkt nicht, dass er gefiltert wurde).
+1. **`isLikelyBotSubmission(formData.get('contact_time'))`** → bei Treffer **`{ success: true }`** zurückgeben (Bot merkt nicht, dass er gefiltert wurde).
 2. **`verifyAltcha(formData.get('altcha'))`** → bei Fehler klare Nutzermeldung.
 3. Eigene Validierung und **`payload.create`**.
 4. Nur nach erfolgreichem Speichern: **`markAltchaPayloadConsumed(altchaPayload)`**.
@@ -392,6 +456,7 @@ Was danach kommt — Einsendungs-Collection, Dateien in einer geschützten Uploa
 ## Checkliste für weitere Formulare
 
 1. `Honeypot` im `<form>`; Name `contact_time` oder Hilfsfunktion anpassen.
-2. `AltchaWidget` im `<form>`; bei komplexem Client ggf. `auto="onload"` und `verified` / `verify()` wie in Variante A.
-3. Server Action: Honeypot → ALTCHA → Logik → `markAltchaPayloadConsumed`.
+2. `AltchaWidget` im `<form>`; bei komplexem Client ggf. `auto="onload"` und `verified` / `verify()` wie in Variante A. Attributname am installierten Paket prüfen (`challenge` bei v3, siehe oben).
+3. Server Action: Honeypot (zeitbasiert) → ALTCHA → Logik → `markAltchaPayloadConsumed`.
 4. `ALTCHA_HMAC_KEY` in jeder Umgebung setzen.
+5. Honeypot nie auf reine Vorhandensein-Prüfung zurückbauen — siehe „Bekannte Falle" oben.
