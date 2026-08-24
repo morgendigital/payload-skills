@@ -259,6 +259,25 @@ weiterleiten.
 - [ ] Jede Seite hat einen **individuellen** `meta.title` (30–60 Zeichen) und
       `meta.description` (70–160 Zeichen) — kein leerer und kein doppelter Wert.
 - [ ] Canonical-URL pro Seite korrekt, `/home` auf `/` normalisiert, Locale-Präfixe stimmen.
+- [ ] **`/home` selbst leitet per `301` auf `/` weiter**, nicht nur der Canonical-Tag. In
+      Payload rendert die Root-`page.tsx` das Dokument mit Slug `home` — `/` und `/home` liefern
+      also **beide** `200` mit identischem Inhalt, solange kein echter Redirect existiert; ein
+      Canonical (siehe [seo Punkt 3](../seo/description.md)) ist nur ein Hinweis an Crawler, kein
+      Zwang. Kurz prüfen: `curl -sI https://domain.at/home` → erwartet `301` auf `/`, und bei
+      mehreren Locales dasselbe für `/en/home` usw. Fehlt der Redirect, in `next.config.js`
+      nachtragen (locale-bewusst, falls `[locale]/[slug]` genutzt wird):
+      ```js
+      async redirects() {
+        return [{ source: '/home', destination: '/', permanent: true }]
+      }
+      ```
+- [ ] **Kein interner Link zeigt aktiv auf `/home`.** `CMSLink` löst `home` → `/` normalerweise
+      korrekt auf (siehe [advanced-link](../advanced-link/description.md#href-für-reference-und-custom)),
+      aber Lexical-Rich-Text-Links laufen über eine **separate** Implementierung
+      (`internalDocToHref`) — dort kann dieselbe `home`→`/`-Regel fehlen, weil sie getrennt
+      gepflegt wird (siehe advanced-link.md, „Hinweis für Migration"). Stichprobe: Rich-Text mit
+      einem Link auf die Startseite im Frontend anklicken/inspizieren, nicht nur den
+      Block-/Nav-Link.
 - [ ] OG-Bild ist **tatsächlich populiert** (1200×630), nicht überall das nie ersetzte
       Default-Bild — Ursache in der Regel der `depth`-Bug aus seo-meta-check.
 - [ ] `curl https://domain.at/robots.txt | grep -i sitemap` — jede Collection mit öffentlicher
@@ -303,6 +322,8 @@ weiterleiten.
       in zusammengesetzten Widgets und Cookie-Banner.
 - [ ] SEO-Stichprobe aus Todo 6 geprüft: Meta-Titel/-Description individuell, OG-Bild populiert,
       Sitemap vollständig, `/admin/seo-check`-Findings abgearbeitet.
+- [ ] `/home` leitet per `301` auf `/` weiter (nicht nur Canonical), für alle Locales; kein
+      interner bzw. Rich-Text-Link zeigt noch aktiv auf `/home`.
 - [ ] Bei Relaunch/Migration: alte URLs vor Abbau der Altsite gesichert, gezielt (nicht auf `/`)
       per `301` weitergeleitet, stichprobenartig mit `curl -I` gegengeprüft, kein 404 vergessen.
 - [ ] Rundgang aus Todo 7 abgehakt.
