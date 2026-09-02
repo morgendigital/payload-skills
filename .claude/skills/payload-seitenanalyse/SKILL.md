@@ -67,3 +67,15 @@ hast. Die Umsetzung geht auf Basis dieser Annahmen weiter.
 - Keine Screens umsetzen, nur planen
 - Figma-Exporte nicht committen
 - Keine Tickets in anderen Teams anlegen
+
+## Merge-Strategie
+
+Beim Ticketschnitt für jedes Ticket festhalten, welche gemeinsam genutzten
+Dateien es anfassen wird. Tickets, die dieselbe zentrale Datei ändern, sind
+nicht parallel abarbeitbar — entweder über Linear-Relations in eine
+Reihenfolge bringen, oder ein vorgeschaltetes Ticket vorsehen, das die
+gemeinsame Datei einmalig vorbereitet.
+
+Im Umsetzungsplan einen Abschnitt "Merge-Strategie" führen: welche Tickets
+parallel laufen können, welche nacheinander müssen, und welche gemeinsamen
+Dateien der Grund dafür sind.
