@@ -770,6 +770,70 @@ Kurz: **Keycloak** = harte, zentrale **drei Stufen** für **Wer ist welcher User
 
 ---
 
+## Variante B+: Env-konfigurierbares Rollen-Gate (Referenz: dawi)
+
+Konkrete, kleinere Alternative zu den „drei Client-Rollen" oben, wenn ihr nur **eine** Frage habt — „darf dieser Account überhaupt ins CMS?" — statt einer vollen Admin/Editor/Viewer-Matrix. Das Gate sitzt **in der Payload-Strategy selbst**, nicht nur in `access`-Regeln, damit ein nicht-berechtigter Keycloak-Login gar nicht erst einen Payload-`users`-Eintrag bekommt.
+
+1. **`getUserInfo`** im `genericOAuth`-Provider liest zusätzlich das **ID-Token** aus (`tokens.idToken`, Base64URL-Payload dekodieren) und merged `resource_access` / `realm_access` in das Profil — die Keycloak-UserInfo-Antwort enthält diese Claims oft nicht, das ID-Token schon.
+2. **`mapProfileToUser`** rechnet daraus eine flache `keycloakRoles: string[]`-Liste (Client-Rollen **und** Realm-Rollen zusammengeführt — bewusst großzügig, damit die Rolle in Keycloak wahlweise realm- oder client-scoped angelegt werden kann) und schreibt sie als **`additionalFields`** auf den Better-Auth-User.
+3. Die **Payload-Strategy** liest `session.user.keycloakRoles` und lässt nur durch, wer `admin` **oder** die Rolle aus einer Env-Variable hat:
+
+   ```ts
+   const roles = session.user.keycloakRoles ?? []
+   const requiredRole = process.env.KEYCLOAK_CMS_REQUIRED_ROLE // z. B. "dawi"
+   const allowed = roles.includes('admin') || (Boolean(requiredRole) && roles.includes(requiredRole))
+   if (!allowed) return { user: null } // kein Payload-User wird angelegt/aktualisiert
+   ```
+
+   `KEYCLOAK_CMS_REQUIRED_ROLE` macht das Playbook **projektunabhängig kopierbar**: jedes neue Repo bekommt denselben Code, nur der Rollenname im Env ändert sich (bei dawi: `dawi`). `admin` bleibt hart codiert als agenturweite Ausnahme.
+4. **Auto-Provisioning und Rollen-Sync laufen zusammen:** existiert noch kein `users`-Dokument für die E-Mail/`betterAuthUserId`, wird es **nur** angelegt, wenn das Gate oben schon bestanden ist; existiert es, wird `keycloakRoles` bei jedem Login synchronisiert (Feld `keycloakRoles`, `admin.readOnly: true`, reine Transparenz im Admin — nicht die Quelle der Zugriffsentscheidung, die läuft immer live über die Keycloak-Session).
+5. Ein `betterAuthUserId`-Feld (hidden, readOnly) ergänzt die reine E-Mail-Zuordnung für den Fall, dass sich die E-Mail einer Person in Keycloak später ändert.
+
+**Wichtig, falls lokales Passwort komplett entfällt (siehe nächster Abschnitt):** `disableLocalStrategy: true` (Boolean) entfernt in aktuellen Payload-Versionen das `email`-Feld **komplett** aus Schema und generierten Types — die Strategy kann dann nicht mehr nach E-Mail matchen. Stattdessen:
+
+```ts
+auth: {
+  disableLocalStrategy: {
+    enableFields: true,      // behält email + die (hidden) auth-Plumbing-Felder
+    optionalPassword: true,
+  },
+  strategies: [betterAuthStrategy],
+}
+```
+
+Kein lokales Passwort-Feld erscheint im Admin trotzdem (die Login-Form selbst rendert nur bei aktiver lokaler Strategy) — `enableFields` betrifft nur das Schema, nicht die UI.
+
+## Passwortänderung nur noch über Keycloak
+
+Wenn lokales Payload-Login komplett entfällt (siehe oben), gibt es in der Userverwaltung kein Passwortfeld mehr, über das man etwas ändern könnte — Identität und Credentials liegen vollständig in Keycloak. Ersatz: ein **`ui`-Feld** auf der `users`-Collection, das einen Link zur **Keycloak-eigenen Account-Console** (`{issuer}/account`, Self-Service inkl. Passwortänderung, 2FA, Sitzungen) rendert:
+
+```ts
+{
+  name: 'keycloakAccount',
+  type: 'ui',
+  admin: {
+    components: { Field: '@/components/KeycloakAccountLink' },
+  },
+}
+```
+
+Die Komponente selbst ist eine `'use client'`-Komponente mit einem `@payloadcms/ui`-`Button` (`el="anchor"`, `url`, `newTab`) — kein eigenes Passwort-UI, nur ein Sprungbrett zu Keycloak. `NEXT_PUBLIC_KEYCLOAK_ISSUER` muss dafür gesetzt sein (client-seitig, da `NEXT_PUBLIC_*` nötig ist). Ergänzt damit `LogoutButton` (RP-Initiated Logout) um den zweiten Keycloak-Selfservice-Baustein im Admin.
+
+## Achtung bei bestehendem 2FA-Plugin (z. B. `payload-totp`)
+
+Hängt ein TOTP-/2FA-Plugin an der lokalen Payload-Login-Strategy (z. B. `payload-totp`, das über `disableAccessWrapper` an `users` registriert wird), wird es beim Umstieg auf **ausschließlich** Keycloak-Login **wirkungslos** — es gibt keinen lokalen Login-Flow mehr, den es absichern könnte. Das ist kein Bug, aber leicht zu übersehen: MFA muss dann **in Keycloak** konfiguriert werden (Required Action „Configure OTP", oder eine Authentication-Flow-Policy), nicht mehr im Payload-Admin. Vor dem Go-Live prüfen, ob das 2FA-Plugin noch aktiv registriert ist und ob das für Nutzer verwirrend wäre (z. B. weil dessen Setup-UI weiterhin sichtbar ist, aber nie mehr greift).
+
+## Versions-Falle: `genericOAuth`-API ändert sich zwischen Better-Auth-Versionen
+
+Die Codebeispiele weiter oben (`genericOAuthClient()`, `signIn.oauth2({providerId})`, Callback unter `/api/auth/oauth2/callback/<id>`) stammen aus einer älteren Better-Auth-Version. Ab **`better-auth@^1.7`** registriert `genericOAuth` Provider als **erstklassige Social-Provider**:
+
+- **Kein** `genericOAuthClient()`-Plugin mehr nötig — Sign-in läuft über den Core-Client: `authClient.signIn.social({ provider: providerId, callbackURL })`.
+- Callback-Pfad ist der **Standard-Social-Callback**: `{siteRoot}/api/auth/callback/<providerId>` (nicht mehr `/oauth2/callback/<providerId>`) — Keycloaks „Valid redirect URIs" entsprechend anpassen.
+- Es gibt einen eingebauten **`keycloak()`-Provider-Helper** (`better-auth/plugins/generic-oauth`) mit `discoveryUrl` statt manuell zusammengesetzten `authorizationUrl`/`tokenUrl`/`userInfoUrl` — praktisch für den Standardfall, aber er reicht **keine** `getUserInfo`/`mapProfileToUser`-Hooks durch. Für das Rollen-Gate oben braucht ihr die **manuelle** `GenericOAuthConfig` mit `discoveryUrl` + eigenem `getUserInfo`/`mapProfileToUser`, nicht den Helper direkt.
+- **Immer im `node_modules/better-auth/dist/plugins/generic-oauth/**/*.d.mts` der tatsächlich installierten Version nachsehen**, bevor ihr Codebeispiele aus diesem Dokument oder aus der offiziellen Doku 1:1 übernehmt — genau der Fall, den der Abschnitt „Next.js + Payload 3 (Catch-All) → Handler" oben schon für den Route-Handler warnt, gilt hier ebenso für den Client- und Provider-Code.
+
+---
+
 ## Sicherheit (Kurz)
 
 - Wer den CMS-Client in Keycloak nutzen darf = wer ins Admin kann (bei Variante B zusätzlich Payload-`access`/Rollen beachten). Ergänzend: **Client-Rollen** (drei Stufen) für **`users`** wie oben.
