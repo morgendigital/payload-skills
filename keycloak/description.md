@@ -775,7 +775,7 @@ Kurz: **Keycloak** = harte, zentrale **drei Stufen** für **Wer ist welcher User
 Konkrete, kleinere Alternative zu den „drei Client-Rollen" oben, wenn ihr nur **eine** Frage habt — „darf dieser Account überhaupt ins CMS?" — statt einer vollen Admin/Editor/Viewer-Matrix. Das Gate sitzt **in der Payload-Strategy selbst**, nicht nur in `access`-Regeln, damit ein nicht-berechtigter Keycloak-Login gar nicht erst einen Payload-`users`-Eintrag bekommt.
 
 1. **`getUserInfo`** im `genericOAuth`-Provider liest zusätzlich das **ID-Token** aus (`tokens.idToken`, Base64URL-Payload dekodieren) und merged `resource_access` / `realm_access` in das Profil — die Keycloak-UserInfo-Antwort enthält diese Claims oft nicht, das ID-Token schon.
-2. **`mapProfileToUser`** rechnet daraus eine flache `keycloakRoles: string[]`-Liste (Client-Rollen **und** Realm-Rollen zusammengeführt — bewusst großzügig, damit die Rolle in Keycloak wahlweise realm- oder client-scoped angelegt werden kann) und schreibt sie als **`additionalFields`** auf den Better-Auth-User.
+2. **`mapProfileToUser`** rechnet daraus eine flache `keycloakRoles: string[]`-Liste (Client-Rollen **und** Realm-Rollen zusammengeführt — bewusst großzügig, damit die Rolle in Keycloak wahlweise realm- oder client-scoped angelegt werden kann). **Nicht** von dort direkt in die DB schreiben lassen — siehe Falle unten.
 3. Die **Payload-Strategy** liest `session.user.keycloakRoles` und lässt nur durch, wer `admin` **oder** die Rolle aus einer Env-Variable hat:
 
    ```ts
@@ -788,6 +788,32 @@ Konkrete, kleinere Alternative zu den „drei Client-Rollen" oben, wenn ihr nur 
    `KEYCLOAK_CMS_REQUIRED_ROLE` macht das Playbook **projektunabhängig kopierbar**: jedes neue Repo bekommt denselben Code, nur der Rollenname im Env ändert sich (bei dawi: `dawi`). `admin` bleibt hart codiert als agenturweite Ausnahme.
 4. **Auto-Provisioning und Rollen-Sync laufen zusammen:** existiert noch kein `users`-Dokument für die E-Mail/`betterAuthUserId`, wird es **nur** angelegt, wenn das Gate oben schon bestanden ist; existiert es, wird `keycloakRoles` bei jedem Login synchronisiert (Feld `keycloakRoles`, `admin.readOnly: true`, reine Transparenz im Admin — nicht die Quelle der Zugriffsentscheidung, die läuft immer live über die Keycloak-Session).
 5. Ein `betterAuthUserId`-Feld (hidden, readOnly) ergänzt die reine E-Mail-Zuordnung für den Fall, dass sich die E-Mail einer Person in Keycloak später ändert.
+
+**⚠️ Falle: `input: false` blockiert auch den eigenen Rollen-Sync, nicht nur Client-Input.** `keycloakRoles` muss `input: false` haben (`user.additionalFields`), sonst könnte ein Nutzer sich über Better Auths generischen `update-user`-Endpoint selbst Rollen zuweisen. Das Problem: Better Auth prüft dieses Flag in `parseAdditionalUserInputFromProviderProfile` (`db/schema.mjs`) — `if (schema[key]?.input === false) continue` — und diese Funktion filtert **jede** aus `mapProfileToUser` kommende Provider-Info, nicht nur clientseitige Requests. Ergebnis: `keycloakRoles` aus `mapProfileToUser` wird **nie** persistiert — weder bei Account-Erstellung noch bei nachfolgenden Logins, auch nicht mit `overrideUserInfo: true` (das steuert nur, ob überhaupt ein Update-Versuch mit den Profildaten läuft — der `input:false`-Filter greift trotzdem). Das Feld bleibt für immer auf seinem `defaultValue` eingefroren, ganz unabhängig davon, was Keycloak tatsächlich liefert — ein Bug, der sich als Keycloak-Konfigurationsproblem tarnt (leeres Token, falscher Mapper, fehlende Rolle), obwohl Keycloak die Rolle die ganze Zeit korrekt ausliefert.
+
+**Fix:** `keycloakRoles` NICHT über `mapProfileToUser`/`additionalFields` schreiben lassen. Stattdessen per `databaseHooks.account.create.after` **und** `.update.after` (Accounts werden bei jedem Login geschrieben/aktualisiert, auch bei reinem Token-Refresh) direkt und am Filter vorbei per Adapter-Query setzen:
+
+```ts
+databaseHooks: {
+  account: {
+    create: { after: syncKeycloakRolesFromAccount },
+    update: { after: syncKeycloakRolesFromAccount }, // Token-Refresh löst das auch aus
+  },
+},
+```
+
+```ts
+async function syncKeycloakRolesFromAccount(account: { userId?: string; idToken?: string | null }) {
+  if (!account.userId || !account.idToken) return
+  const roles = extractKeycloakRoles(decodeJwtPayload(account.idToken), keycloakClientId)
+  await db.collection('user').updateOne(
+    { _id: new ObjectId(account.userId) }, // Mongo-Adapter: _id ist echtes BSON ObjectId, userId als String muss konvertiert werden
+    { $set: { keycloakRoles: roles } },
+  )
+}
+```
+
+Der Account-Hook bekommt `idToken` direkt mitgeliefert (wird bei jedem Login/Refresh im Account-Dokument aktualisiert) — daraus lässt sich `resource_access`/`realm_access` genauso dekodieren wie in `getUserInfo`. Diagnose-Tipp, falls Rollen trotz korrektem Keycloak-Token leer bleiben: direkt in der DB nachsehen, ob `updatedAt` des `user`-Dokuments beim Login überhaupt aktualisiert wird (zeigt, ob der Schreibpfad läuft) und ob `keycloakRoles` dabei wirklich mitgeschrieben wird — ein `input: false`-Feld kann in `mapProfileToUser` fehlerfrei berechnet werden und trotzdem nie ankommen.
 
 **Wichtig, falls lokales Passwort komplett entfällt (siehe nächster Abschnitt):** `disableLocalStrategy: true` (Boolean) entfernt in aktuellen Payload-Versionen das `email`-Feld **komplett** aus Schema und generierten Types — die Strategy kann dann nicht mehr nach E-Mail matchen. Stattdessen:
 
