@@ -6,12 +6,13 @@ zusätzlich zu, nicht statt [lighthouse-check](../lighthouse-check/description.m
 (Header/CORS/Secrets/Infra). Dieser Check prüft, ob die Site **funktioniert und rechtlich
 steht**: Monitoring sieht sie als gesund, Mails kommen an, der Cookie-Banner blockt Tracking
 korrekt, Impressum/Datenschutz sind da und stimmen mit dem echten Setup überein, Formulare
-holen eine echte Einwilligung ein, die Seite ist per Tastatur bedienbar, und die
-Meta-/Sitemap-Basics stehen.
+holen eine echte Einwilligung ein, die Seite ist per Tastatur bedienbar, die
+Meta-/Sitemap-Basics stehen, und die AI-Crawler kommen überhaupt durch.
 
 Reihenfolge: **Todo 1** Health-Endpoint → **Todo 2** SMTP-Kurzcheck → **Todo 3** Cookie-Banner
 funktional → **Todo 4** Impressum, Datenschutz & Formular-Einwilligung → **Todo 5**
-Barrierefreiheit-Tastaturrundgang → **Todo 6** SEO → **Todo 7** Rundgang.
+Barrierefreiheit-Tastaturrundgang → **Todo 6** SEO → **Todo 7** Secrets & Logs → **Todo 8**
+Rundgang.
 
 ---
 
@@ -155,7 +156,7 @@ Volle Anleitung in
 [form-submissions-email Todo 2](../form-submissions-email/description.md#todo-2-sichere-datei-collection--niemals-media).
 Ein Bewerbungs-Upload unter derselben öffentlich lesbaren URL wie ein Bild aus der Bildergalerie
 ist der teuerste Fund, den dieser Check machen kann — deshalb hier nochmal explizit, nicht nur
-über den `security-check`-Verweis im Rundgang (Todo 7):
+über den `security-check`-Verweis im Rundgang (Todo 8):
 
 - [ ] Uploads liegen in einer **eigenen Collection**, nicht in `media` — `media` hängt am
       CDN/imgproxy und ist für jeden mit der URL lesbar.
@@ -316,9 +317,105 @@ alte Sitemap-Route, die eine längst gelöschte Collection referenziert:
       beide cachen, nach Fixes Re-Scrape auslösen.
 - [ ] `metadataBase` gesetzt, `<html lang>` korrekt, genau ein `<h1>` pro Seite.
 
+**AI-Search-Zugang (GEO):**
+
+Hintergrund und Umsetzung in [geo](../geo/description.md). Vor Go-Live zählt nur, ob die
+Retrieval-Bots **durchkommen** — der Rest ist Inhaltsarbeit und kein Launch-Blocker:
+
+```bash
+# 200 = Bot kommt durch, 403/503 = am Edge geblockt (robots.txt ist dann irrelevant)
+for ua in "OAI-SearchBot" "Claude-SearchBot" "PerplexityBot" "ChatGPT-User"; do
+  printf '%-18s %s\n' "$ua" "$(curl -s -o /dev/null -w '%{http_code}' -A "$ua" https://domain.at/)"
+done
+```
+
+- [ ] Alle vier Retrieval-Bots liefern `200`. Bei `403`/`503` **zuerst in Cloudflare**
+      (Security → Bots) nachsehen — „Bot Fight Mode" und die verwaltete AI-Scraper-Regel blocken
+      vor der robots.txt, und die Seite ist dann in ChatGPT/Perplexity schlicht nicht zitierbar.
+      Derselbe Mechanismus, der in [lighthouse-check](../lighthouse-check/description.md) den
+      Score verfälscht.
+- [ ] `curl -s https://domain.at/robots.txt` — **eine** Quelle (entweder `next-sitemap` oder
+      `app/robots.ts`, nie beides), Retrieval-Bots nicht per `Disallow` ausgesperrt, und die
+      `Content-Signal`-Zeile entspricht der **dokumentierten Kundenentscheidung** zu
+      `ai-train` (nicht dem Default, der zufällig übrig geblieben ist).
+- [ ] Falls im Projekt vorhanden: `/llms.txt` liefert `200` mit kuratiertem Inhalt (keine
+      Entwürfe, keine Dubletten), pro Locale eine eigene Datei; die verlinkten `.md`-Routen
+      antworten mit `Content-Type: text/markdown` **und** `Vary: Accept`.
+- [ ] Falls im Projekt vorhanden: Markdown-Vorschau einer Landingpage im Admin gegenlesen —
+      leerer oder halber Text heißt, dass Blocks ohne `toMarkdown`-Eintrag ausgeliefert werden.
+- [ ] JSON-LD gegen zwei echte URLs geprüft (**Rich Results Test** für die Typen mit Rich
+      Result, **Schema Markup Validator** für den Rest): `Organization`/`LocalBusiness` mit
+      `sameAs` und Adresse deckungsgleich zum Impressum, `@id`-Verweise lösen auf, `inLanguage`
+      pro Locale, `dateModified` passt zum sichtbaren Datum, kein doppeltes `Organization`-Objekt
+      aus Layout **und** Block. FAQ-Markup darf bleiben, liefert seit 05/2026 aber kein Rich
+      Result mehr — falls dem Kunden das mal verkauft wurde, jetzt sagen.
+- [ ] Bei Jobs-/Stellen-Collections: `JobPosting` hat `validThrough`, und **abgelaufene oder
+      besetzte Stellen sind aus Seite, Sitemap und Schema raus** — weiter ausgelieferte
+      Alt-Anzeigen sind einer der wenigen Fälle mit manueller Maßnahme.
+- [ ] GA4-Kanalgruppe für AI-Quellen (`openai`, `chatgpt`, `perplexity`, `gemini`, `claude`,
+      `copilot`) steht **vor** dem Launch — rückwirkend lässt sie sich nicht anlegen. Dem Kunden
+      dabei sagen, dass 35–70 % der AI-Klicks ohne Referrer als „Direct" ankommen.
+
 ---
 
-## Todo 7: Rundgang
+## Todo 7: Secrets & Logs — Exposure-Check
+
+[security-check §4](../security-check/description.md#4-environment-variables-absichern) und
+[§11](../security-check/description.md#11-logging--error-handling) sind Guidance für die
+**Entwicklung** (nicht committen, Fehler nicht an den Client leaken). Hier geht es um die
+**Verifikation gegen die live laufende Produktions-URL** — sicherstellen, dass davon auch
+wirklich nichts durchgerutscht ist:
+
+- [ ] `.env`-Dateien nicht öffentlich erreichbar (falscher `public/`-Pfad oder
+      Reverse-Proxy-Fehlkonfiguration):
+      ```bash
+      curl -sI https://domain.at/.env
+      curl -sI https://domain.at/.env.local
+      curl -sI https://domain.at/.env.production
+      ```
+      Erwartet: **`404`** bei jedem Aufruf, nie `200`.
+- [ ] `.git`-Verzeichnis nicht erreichbar (relevant, falls je per Datei-Copy statt
+      Build-Artefakt deployed wurde):
+      ```bash
+      curl -sI https://domain.at/.git/config
+      ```
+      Erwartet: `404`.
+- [ ] Source Maps in Produktion deaktiviert (Next.js-Default) oder, falls bewusst aktiv, ohne
+      Secrets/interne Pfade im gemappten Code:
+      ```bash
+      curl -sI https://domain.at/_next/static/chunks/main.js.map
+      ```
+      Erwartet bei Default-Konfiguration: `404`.
+- [ ] `NODE_ENV=production` gesetzt (siehe [security-check
+      §13](../security-check/description.md#13-deployment-checkliste-dokploy--hetzner)) — eine
+      API-Route mit ungültigem Payload liefert die generische Fehlermeldung, **keinen** Next.js
+      Dev-Overlay-Stack-Trace, keinen Env-Dump, keine internen Dateipfade:
+      ```bash
+      curl -s https://domain.at/api/irgendein-endpoint -X POST -d '{}' -H 'Content-Type: application/json'
+      ```
+- [ ] Keine vergessenen Debug-/Log-Endpoints öffentlich erreichbar (`/api/debug`, `/api/logs`
+      o. Ä.):
+      ```bash
+      grep -rn "app/api" src --include="route.ts" | grep -iE "debug|log[s]?/"
+      ```
+      Jeden Treffer einzeln gegen die Produktions-URL aufrufen und prüfen, dass er nicht ohne
+      Auth erreichbar ist.
+- [ ] `X-Powered-By`-Header deaktiviert, kein unnötiges internes Detail im Response-Header:
+      ```js
+      // next.config.js
+      module.exports = { poweredByHeader: false }
+      ```
+- [ ] Bei Repo-Übergabe oder wenn das Repository öffentlich/für den Kunden sichtbar wird: Git-
+      **Historie**, nicht nur den aktuellen Stand, auf versehentlich committete Secrets scannen
+      — ein Secret, das mal committet und später wieder entfernt wurde, steht trotzdem noch in
+      der Historie:
+      ```bash
+      npx -y gitleaks detect --source . -v
+      ```
+
+---
+
+## Todo 8: Rundgang
 
 - [ ] `curl -I https://domain.at` — HTTPS aktiv, Security-Header vorhanden (siehe
       [security-check](../security-check/description.md)).
@@ -349,8 +446,14 @@ alte Sitemap-Route, die eine längst gelöschte Collection referenziert:
       `/admin/seo-check`-Findings abgearbeitet.
 - [ ] Sitemap in beide Richtungen abgeglichen: keine Collection mit `[slug]`-Route fehlt, keine
       Sitemap-Route/`revalidateTag` verweist noch auf eine gelöschte oder umbenannte Collection.
+- [ ] AI-Search-Zugang aus Todo 6 geprüft: `OAI-SearchBot`/`Claude-SearchBot`/`PerplexityBot`/
+      `ChatGPT-User` bekommen `200` (nicht am Cloudflare-Edge geblockt), `Content-Signal`
+      entspricht der Kundenentscheidung, `/llms.txt` und `.md`-Routen antworten korrekt.
 - [ ] `/home` leitet per `301` auf `/` weiter (nicht nur Canonical), für alle Locales; kein
       interner bzw. Rich-Text-Link zeigt noch aktiv auf `/home`.
 - [ ] Bei Relaunch/Migration: alte URLs vor Abbau der Altsite gesichert, gezielt (nicht auf `/`)
       per `301` weitergeleitet, stichprobenartig mit `curl -I` gegengeprüft, kein 404 vergessen.
-- [ ] Rundgang aus Todo 7 abgehakt.
+- [ ] Secrets & Logs aus Todo 7 gegen die Produktions-URL geprüft: `.env`/`.git`/Source Maps
+      nicht erreichbar, keine Stack-Traces/Env-Dumps in Fehler-Responses, keine offenen
+      Debug-Endpoints, Git-Historie bei Repo-Übergabe gescannt.
+- [ ] Rundgang aus Todo 8 abgehakt.

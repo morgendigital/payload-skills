@@ -356,114 +356,336 @@ export const runSeoCheck = async (
 
 → **`overrideAccess: false` + `user`**, sonst leakt die View Titel aus Collections, die der eingeloggte Redakteur gar nicht lesen darf.
 
-### 5.3 Die View
+### 5.3 Die View — problemorientiert statt Tabellen-Dump
+
+**Der UX-Fehler der ersten Version war die Sortierung nach Dokument.** Eine Liste mit 40 Zeilen
+„Description fehlt" beantwortet nicht die Frage, die die Redaktion tatsächlich hat: *Was mache
+ich als Nächstes, und wie lange dauert es?* Deshalb steht oben eine **Befund-Liste** (ein Eintrag
+pro Problemart mit Anzahl), und die Dokumenttabelle darunter ist gefiltert. Jeder Befund ist ein
+Filter-Link — die View ist damit vollständig über die URL steuerbar (`?issue=desc-missing`),
+bookmarkbar und ohne Client-State.
+
+Dafür brauchen Findings **eine ID und ein Zielfeld** — `checks.ts` aus 5.1 entsprechend erweitern:
+
+```ts
+// src/components/SeoCheck/checks.ts
+export type IssueId =
+  | 'title-missing' | 'title-length' | 'title-duplicate'
+  | 'desc-missing'  | 'desc-length'  | 'desc-duplicate'
+  | 'image-missing' | 'image-depth'  | 'image-alt'
+
+export type Finding = {
+  id: IssueId
+  label: string
+  severity: Severity
+  /** Feldpfad für den Deep-Link, z. B. 'meta.title' */
+  field?: string
+}
+
+export const ISSUE_LABELS: Record<IssueId, string> = {
+  'title-missing': 'meta.title leer (Fallback greift)',
+  'title-duplicate': 'Titel doppelt',
+  'desc-missing': 'Description fehlt',
+  // …
+}
+
+// statt push({ label: 'Description fehlt', severity: 'error' }):
+findings.push({
+  id: 'desc-missing', label: ISSUE_LABELS['desc-missing'],
+  severity: 'error', field: 'meta.description',
+})
+```
+
+→ **Warum das Feld mitkommt:** Payload vergibt Feld-IDs nach dem Muster
+`field-${path.replace(/\./g, '__')}`. Aus `meta.description` wird also der Anker
+`#field-meta__description` — der Link aus dem Dashboard landet damit **im richtigen Feld** statt
+nur irgendwo im Dokument. Das ist der Unterschied zwischen „Liste zum Abarbeiten" und „Bericht
+zum Ausdrucken".
 
 ```tsx
 // src/components/SeoCheck/View.tsx
 import type { AdminViewServerProps } from 'payload'
-import { SetStepNav } from '@payloadcms/ui'
+import { Banner, Button, Gutter, Pill, SetStepNav } from '@payloadcms/ui'
 import { DefaultTemplate } from '@payloadcms/ui/rsc'
 import { redirect } from 'next/navigation'
 import React from 'react'
+import { ISSUE_LABELS, type IssueId, type Severity } from './checks'
 import { runSeoCheck } from './run'
 
-const DOT: Record<string, string> = { ok: '🟢', warn: '🟡', error: '🔴' }
+const PILL: Record<Severity, 'error' | 'success' | 'warning'> = {
+  error: 'error', warn: 'warning', ok: 'success',
+}
+const STATUS_LABEL: Record<Severity, string> = { error: 'Fehler', warn: 'Hinweis', ok: 'OK' }
+
+const anchor = (field?: string) => (field ? `#field-${field.replace(/\./g, '__')}` : '')
 
 export async function SeoCheckView({ initPageResult, params, searchParams }: AdminViewServerProps) {
   const { permissions, req, visibleEntities } = initPageResult
   const adminRoute = req.payload.config.routes.admin
-
   if (!req.user || !permissions?.canAccessAdmin) return redirect(`${adminRoute}/unauthorized`)
 
-  const { rows, truncated } = await runSeoCheck(req.user)
-  const count = (s: string) => rows.filter((r) => r.status === s).length
+  const issue = typeof searchParams?.issue === 'string' ? (searchParams.issue as IssueId) : undefined
+  const status = typeof searchParams?.status === 'string' ? (searchParams.status as Severity) : undefined
+
+  const { checkedAt, rows, truncated } = await runSeoCheck(req.user)
+
+  // Befunde zählen — das ist die eigentliche Arbeitsliste
+  const counts = new Map<IssueId, { count: number; severity: Severity }>()
+  for (const row of rows) {
+    for (const f of row.findings) {
+      if (f.severity === 'ok') continue
+      counts.set(f.id, { count: (counts.get(f.id)?.count ?? 0) + 1, severity: f.severity })
+    }
+  }
+  const issues = [...counts.entries()].sort((a, b) =>
+    a[1].severity === b[1].severity ? b[1].count - a[1].count : a[1].severity === 'error' ? -1 : 1,
+  )
+
+  const visible = rows
+    .filter((r) => (issue ? r.findings.some((f) => f.id === issue) : true))
+    .filter((r) => (status ? r.status === status : r.status !== 'ok'))
+    .sort((a, b) => ['error', 'warn', 'ok'].indexOf(a.status) - ['error', 'warn', 'ok'].indexOf(b.status))
+
+  const link = (next: Record<string, string | undefined>) => {
+    const p = new URLSearchParams()
+    for (const [k, v] of Object.entries({ issue, status, ...next })) if (v) p.set(k, String(v))
+    return `${adminRoute}/seo-check${[...p].length ? `?${p}` : ''}`
+  }
 
   return (
     <DefaultTemplate
-      i18n={req.i18n}
-      locale={initPageResult.locale}
-      params={params}
-      payload={req.payload}
-      permissions={permissions}
-      searchParams={searchParams}
-      user={req.user}
+      i18n={req.i18n} locale={initPageResult.locale} params={params} payload={req.payload}
+      permissions={permissions} searchParams={searchParams} user={req.user}
       visibleEntities={visibleEntities}
     >
       <SetStepNav nav={[{ label: 'SEO-Check' }]} />
-      <div style={{ padding: '0 var(--gutter-h)' }}>
+      <Gutter>
         <h1>SEO-Check</h1>
-        <p>
-          {DOT.ok} {count('ok')} in Ordnung &nbsp;·&nbsp; {DOT.warn} {count('warn')} Hinweise
-          &nbsp;·&nbsp; {DOT.error} {count('error')} Fehler
-          {truncated ? ' · Liste gekürzt (Limit erreicht)' : ''}
-        </p>
 
-        <table className="table" style={{ width: '100%' }}>
+        {issues.length === 0 ? (
+          <Banner type="success">
+            Alle {rows.length} Seiten haben Titel, Description und Bild — nichts zu tun.
+          </Banner>
+        ) : (
+          <>
+            {/* 1. Arbeitsliste: was ist zu tun, und wie oft */}
+            <ul style={{ display: 'grid', gap: 'calc(var(--base) / 2)', listStyle: 'none', padding: 0 }}>
+              {issues.map(([id, { count, severity }]) => (
+                <li key={id}>
+                  <Button
+                    buttonStyle={issue === id ? 'primary' : 'secondary'} el="link"
+                    to={link({ issue: issue === id ? undefined : id, status: undefined })}
+                  >
+                    <Pill pillStyle={PILL[severity]} size="small">{count}</Pill>
+                    &nbsp;{ISSUE_LABELS[id]}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+
+            {/* 2. Statusfilter — ohne Filter zeigt die Tabelle NUR Auffälliges */}
+            <div style={{ display: 'flex', gap: 'calc(var(--base) / 2)', margin: 'var(--base) 0' }}>
+              {(['error', 'warn', 'ok'] as Severity[]).map((s) => (
+                <Button key={s} buttonStyle={status === s ? 'primary' : 'secondary'} el="link"
+                        to={link({ status: status === s ? undefined : s })}>
+                  {STATUS_LABEL[s]} ({rows.filter((r) => r.status === s).length})
+                </Button>
+              ))}
+            </div>
+          </>
+        )}
+
+        {truncated && (
+          <Banner type="warning">
+            Liste gekürzt — es wurden nur die ersten Dokumente geprüft. Limit in <code>run.ts</code> anheben.
+          </Banner>
+        )}
+
+        <table className="table">
           <thead>
-            <tr>
-              <th style={{ width: '2rem' }} />
-              <th>Seite</th>
-              <th>Pfad</th>
-              <th>Befunde</th>
-            </tr>
+            <tr><th>Status</th><th>Seite</th><th>Pfad</th><th>Befunde</th></tr>
           </thead>
           <tbody>
-            {/* Fehler zuerst — die Liste soll oben handlungsfähig sein */}
-            {[...rows]
-              .sort((a, b) => ['error', 'warn', 'ok'].indexOf(a.status) - ['error', 'warn', 'ok'].indexOf(b.status))
-              .map((row) => (
-                <tr key={`${row.collection}-${row.id}`}>
-                  <td>{DOT[row.status]}</td>
-                  <td>
-                    <a href={`${adminRoute}/collections/${row.collection}/${row.id}`}>{row.title}</a>
-                  </td>
-                  <td style={{ color: 'var(--theme-elevation-500)' }}>{row.path}</td>
-                  <td>
-                    {row.findings.length === 0
-                      ? '—'
-                      : row.findings.map((f) => f.label).join(' · ')}
-                  </td>
-                </tr>
-              ))}
+            {visible.map((row) => (
+              <tr key={`${row.collection}-${row.id}`}>
+                <td><Pill pillStyle={PILL[row.status]} size="small">{STATUS_LABEL[row.status]}</Pill></td>
+                <td><a href={`${adminRoute}/collections/${row.collection}/${row.id}`}>{row.title}</a></td>
+                <td><a href={row.path} rel="noreferrer" target="_blank">{row.path}</a></td>
+                <td>
+                  {row.findings.filter((f) => f.severity !== 'ok').map((f) => (
+                    // Deep-Link direkt in das betroffene Feld
+                    <a key={f.id}
+                       href={`${adminRoute}/collections/${row.collection}/${row.id}${anchor(f.field)}`}>
+                      {f.label}
+                    </a>
+                  ))}
+                </td>
+              </tr>
+            ))}
           </tbody>
         </table>
-      </div>
+
+        <p style={{ color: 'var(--theme-elevation-500)' }}>
+          {visible.length} von {rows.length} Seiten · Stand: {checkedAt.toLocaleString('de-AT')}
+        </p>
+      </Gutter>
     </DefaultTemplate>
   )
 }
 ```
 
-→ `DefaultTemplate` kommt aus **`@payloadcms/ui/rsc`** (ältere Beispiele zeigen `@payloadcms/next/templates`). Ohne das Template rendert die View ohne Sidebar/Nav.
+→ **`Pill` ist ein `div`, kein Button.** Es nimmt weder `onClick` noch `href` entgegen (nur
+`elementProps`). Klickbare Filter deshalb als `Button` mit `el="link"` + `to`, und `Pill`
+ausschließlich als Statusanzeige darin. Wer `onClick` an ein `Pill` hängt, baut ein Element, das
+mit der Tastatur nicht erreichbar ist — genau das, was
+[`accessibility/`](../accessibility/description.md) später anschlägt.
 
-→ Der Auth-Guard (`permissions.canAccessAdmin`) ist **nicht optional** — Custom-Views laufen sonst auch für nicht berechtigte Sessions.
+→ **Emojis raus.** 🟢/🟡/🔴 tragen den Status in der ersten Version **allein**: im Screenreader
+kommt „großer grüner Kreis" an, bei Rot-Grün-Schwäche nichts Unterscheidbares. `Pill` mit Text
+löst beides — und sieht im **Dark Mode** richtig aus, weil es die Admin-Tokens statt eigener
+Inline-Farben nutzt. Dasselbe gilt für die restlichen Inline-Styles: nur noch `var(--base)`,
+`var(--theme-elevation-*)`, sonst driftet die View bei jedem Admin-Theme-Update weg.
+
+→ **Default-Filter ist „nicht OK".** Ohne Filter zeigt die Tabelle nur Fehler und Hinweise. Eine
+Liste, in der 90 % der Zeilen „alles gut" sagen, wird nach dem zweiten Mal nicht mehr geöffnet.
+
+→ **Mehrsprachige Projekte:** `runSeoCheck` pro Locale laufen lassen und die Locale als Spalte
+mitführen. Sonst prüft die View stillschweigend nur die Default-Locale — und meldet gleichzeitig
+falsche „Titel doppelt"-Fehler, sobald zwei Sprachversionen denselben Titel tragen (Duplikate
+immer **innerhalb** einer Locale zählen).
 
 ### 5.4 Das Dashboard-Widget
 
 ```tsx
 // src/components/SeoCheck/Widget.tsx
 import type { ServerProps } from 'payload'
+import { Banner } from '@payloadcms/ui'
 import React from 'react'
 import { runSeoCheck } from './run'
 
 export async function SeoCheckWidget({ payload, user }: ServerProps) {
   const { rows } = await runSeoCheck(user)
+  if (!rows.length) return null // nichts zu prüfen → kein leeres Kästchen aufs Dashboard
+
   const errors = rows.filter((r) => r.status === 'error').length
   const warns = rows.filter((r) => r.status === 'warn').length
-  const adminRoute = payload.config.routes.admin
+  const admin = payload.config.routes.admin
 
   return (
-    <div style={{ border: '1px solid var(--theme-elevation-150)', borderRadius: 'var(--style-radius-m)', padding: 'var(--base)' }}>
-      <h4 style={{ margin: 0 }}>SEO-Status</h4>
-      <p style={{ margin: '0.5rem 0' }}>
-        {rows.length} Seiten geprüft — <strong>{errors}</strong> Fehler, <strong>{warns}</strong> Hinweise
-      </p>
-      <a href={`${adminRoute}/seo-check`}>Details ansehen →</a>
+    <Banner
+      type={errors ? 'danger' : warns ? 'warning' : 'success'}
+      to={`${admin}/seo-check${errors ? '?status=error' : ''}`}
+    >
+      {errors
+        ? `SEO: ${errors} Seiten mit Fehlern${warns ? `, ${warns} mit Hinweisen` : ''} — jetzt ansehen`
+        : warns
+          ? `SEO: ${warns} Hinweise auf ${rows.length} Seiten`
+          : `SEO: alle ${rows.length} Seiten vollständig gepflegt`}
+    </Banner>
+  )
+}
+```
+
+→ **Ein Satz, eine Farbe, ein Ziel.** Das Widget steht über dem Dashboard und konkurriert mit den
+Collection-Kacheln — es darf keine zweite Tabelle sein. Der Link springt direkt in den gefilterten
+Zustand (`?status=error`), damit der Klick nicht in derselben Übersicht landet, aus der man kam.
+
+→ **Den Erfolgsfall anzeigen.** Ein Widget, das nur bei Fehlern erscheint, wirkt kaputt („war das
+da nicht mal?"). Grün ist die Bestätigung, dass überhaupt geprüft wurde.
+
+### 5.5 Live-Check im Editor — der eigentliche UX-Gewinn
+
+Ein Dashboard ist eine Holschuld: Jemand muss es aufrufen. Die Regeln gehören dorthin, wo der Text
+entsteht — in die Sidebar neben die SEO-Felder. `@payloadcms/plugin-seo` bringt Zeichenzähler und
+Suchergebnis-Vorschau mit, aber **keine Regeln**; ein `ui`-Feld ergänzt genau das, mit **derselben**
+`checks.ts`:
+
+```tsx
+// src/components/SeoCheck/FieldCheck.tsx
+'use client'
+import { Pill, useFormFields } from '@payloadcms/ui'
+import React from 'react'
+import { checkDoc } from './checks' // die Ein-Dokument-Regeln, aus buildRows herausgezogen
+
+export const SeoFieldCheck: React.FC = () => {
+  // Ein Hook pro Feld — der Selector darf KEIN neues Array/Objekt zurückgeben (siehe unten)
+  const docTitle = useFormFields(([f]) => f?.title?.value as string)
+  const metaTitle = useFormFields(([f]) => f?.['meta.title']?.value as string)
+  const metaDesc = useFormFields(([f]) => f?.['meta.description']?.value as string)
+  const metaImage = useFormFields(([f]) => f?.['meta.image']?.value as string)
+
+  const findings = checkDoc({
+    title: docTitle,
+    meta: { description: metaDesc, image: metaImage, title: metaTitle },
+  }).filter((f) => f.severity !== 'ok')
+
+  if (!findings.length) return <Pill pillStyle="success" size="small">SEO vollständig</Pill>
+
+  return (
+    <div style={{ display: 'grid', gap: '4px' }}>
+      {findings.map((f) => (
+        <Pill key={f.id} pillStyle={f.severity === 'error' ? 'error' : 'warning'} size="small">
+          {f.label}
+        </Pill>
+      ))}
     </div>
   )
 }
 ```
 
-### 5.5 Verdrahtung
+```ts
+// src/plugins/index.ts — das UI-Feld in die SEO-Gruppe hängen
+seoPlugin({
+  generateDescription, generateTitle, generateURL,
+  fields: ({ defaultFields }) => [
+    ...defaultFields,
+    {
+      name: 'seoStatus',
+      type: 'ui',
+      admin: { components: { Field: '@/components/SeoCheck/FieldCheck#SeoFieldCheck' } },
+    },
+  ],
+})
+```
+
+→ **`useFormFields`-Falle:** Der Selector läuft bei **jeder** Formularänderung. Gibt er ein neu
+erzeugtes Array oder Objekt zurück, ist die Referenz jedes Mal neu und die Komponente rendert
+erneut — im schlechtesten Fall in einer Schleife, die den Editor spürbar ausbremst. Deshalb pro
+Feld ein Aufruf mit primitivem Rückgabewert.
+
+→ **Was hier nicht geht: die Duplikatprüfung.** „Titel doppelt" braucht alle Dokumente und bleibt
+im Dashboard. Genau deshalb die Regeln in `checkDoc` (ein Dokument, clientfähig) und `buildRows`
+(site-weit, serverseitig) trennen — **eine** Regel-Definition, zwei Oberflächen. Zwei Regelsätze,
+die auseinanderdriften, sind schlimmer als gar kein Check.
+
+### 5.6 Ergebnis cachen — ab ~200 Dokumenten Pflicht
+
+Widget **und** View laufen bei jedem Dashboard-Aufruf, beide mit `depth: 1` über alle Dokumente.
+Ohne Cache zahlt jeder Admin-Login das doppelt:
+
+```ts
+// src/components/SeoCheck/run.ts
+import { unstable_cache } from 'next/cache'
+
+const cached = unstable_cache(
+  async () => ({ ...(await collect()), checkedAt: new Date() }),
+  ['seo-check'],
+  { revalidate: 3600, tags: ['seo-check'] },
+)
+```
+
+und in den `afterChange`/`afterDelete`-Hooks der geprüften Collections `revalidateTag('seo-check')` —
+dasselbe Muster wie bei den Sitemap-Routen in [`seo/`](../seo/description.md).
+
+→ **`checkedAt` mit ausgeben.** Ein gecachter Wert ohne Zeitstempel führt garantiert zu „ich habe
+das doch gerade korrigiert". Dazu ein „Neu prüfen"-Button mit einer Server Action, die
+`revalidateTag('seo-check')` aufruft.
+
+→ **Cache und `overrideAccess: false` vertragen sich nicht automatisch.** Ein Cache-Key ohne
+Benutzerbezug liefert dem nächsten Redakteur das Ergebnis des vorigen. Entweder die Rolle in den
+Cache-Key aufnehmen oder den Cache nur für Rollen nutzen, die ohnehin alles lesen dürfen.
+
+### 5.7 Verdrahtung
 
 ```ts
 // src/payload.config.ts
@@ -505,7 +727,8 @@ pnpm payload generate:importmap
 
 → **Der Import-Map-Schritt wird ständig vergessen.** Ohne ihn wird die Komponente stillschweigend nicht geladen — die View ist dann leer oder 404, ohne Fehlermeldung. Nach **jeder** Änderung an registrierten Komponentenpfaden neu ausführen (und in der CI vor dem Build).
 
-→ **Performance:** Widget + View laufen bei jedem Dashboard-Aufruf. Ab ~200 Dokumenten das Ergebnis mit `unstable_cache` (Tag `seo-check`) puffern und den Tag in einem `afterChange`-Hook der geprüften Collections per `revalidateTag` invalidieren — dasselbe Muster wie in [`performance/`](../performance/description.md).
+→ **Auch das `ui`-Feld aus 5.5 braucht die Import-Map.** Es wird über denselben Mechanismus
+aufgelöst wie View und Widget — fehlt der Lauf, ist die Sidebar einfach leer, ohne Fehler.
 
 ## 6. Schwellwerte
 
@@ -524,7 +747,11 @@ pnpm payload generate:importmap
 4. `og`-Bildgröße (1200×630) in `Media.upload.imageSizes` anlegen
 5. Alle Seiten-Queries auf `depth >= 1` prüfen; bei `select` unbedingt `meta` mitselektieren
 6. `twitter` pro Seite explizit setzen (Next.js leitet nichts aus `openGraph` ab)
-7. `checks.ts` / `run.ts` / `View.tsx` / `Widget.tsx` anlegen, in `payload.config.ts` registrieren
+7. `checks.ts` / `run.ts` / `View.tsx` / `Widget.tsx` / `FieldCheck.tsx` anlegen, in `payload.config.ts` registrieren
 8. `pnpm payload generate:importmap` — auch in der CI vor dem Build
 9. `runSeoCheck` mit `overrideAccess: false` + `user` und hartem `limit`
-10. Vor Livegang: OG-Tags mit dem Facebook Sharing Debugger / LinkedIn Post Inspector gegenprüfen (beide cachen — nach Fix Re-Scrape auslösen)
+10. Findings mit `id` **und** `field` versehen — nur dann führt der Befund per `#field-meta__…`-Anker ins richtige Feld
+11. Statt Emoji-Punkten `Pill`/`Banner` aus `@payloadcms/ui`; klickbare Filter als `Button el="link"`, nie als `Pill`
+12. Regeln in `checkDoc` (ein Dokument, clientfähig) und `buildRows` (site-weit) trennen; Live-Check als `ui`-Feld über `seoPlugin({ fields })` in die Sidebar hängen
+13. `unstable_cache` mit Tag `seo-check` + `revalidateTag` im Hook, `checkedAt` in der View anzeigen
+14. Vor Livegang: OG-Tags mit dem Facebook Sharing Debugger / LinkedIn Post Inspector gegenprüfen (beide cachen — nach Fix Re-Scrape auslösen)
