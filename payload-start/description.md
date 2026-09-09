@@ -1,6 +1,6 @@
 # Neues Payload-Website-Setup — Checkliste
 
-Reihenfolge: **Todo 1** Media-Defaults → **Todo 2** S3 mit `@payloadcms/storage-s3` → **Todo 3** zweistufiger Production-Build.
+Reihenfolge: **Todo 1** Media-Defaults → **Todo 2** S3 mit `@payloadcms/storage-s3` → **Todo 3** Production-Build → **Todo 4** stabiler Server-Actions-Key → **Todo 5** Template-Reste aus dem Admin entfernen.
 
 **Deployment:** Standard ist **Dokploy auf einem Hetzner-Server** (Docker, eigene VM) — **nicht** Vercel. Upload-Grenzen kommen hier vor allem von **Payload** (`upload.limits`) und vom **Reverse Proxy** (z. B. Nginx Proxy Manager: `client_max_body_size`), nicht von einem Serverless-Body-Limit.
 
@@ -192,3 +192,86 @@ danach in `Failed to find Server Action`. Einmalig `openssl rand -base64 32` erz
 
 **Ursache, Dev-vs-Prod-Verhalten, `deploymentId` gegen Version-Skew und Checkliste:
 [server-actions-encryption](../server-actions-encryption/description.md).**
+
+## Todo 5: Template-Reste aus dem Admin entfernen
+
+**Dateien:** `src/payload.config.ts`, `src/components/BeforeDashboard/`, `src/components/BeforeLogin/`,
+`src/endpoints/seed/`
+
+Das offizielle Website-Template liefert einen Willkommens-Block auf dem Dashboard, den der Kunde
+am ersten Tag sieht:
+
+> Seed your database with a few pages, posts, and projects to jump-start your new site …
+> Modify your collections and add more fields as needed …
+> **Commit and push your changes to the repository to trigger a redeployment of your project.**
+
+Das ist Entwickler-Onboarding im CMS des Kunden — inklusive einer Anleitung, wie er sein Repo
+deployt. Es gehört in **jedem** Projekt raus, und zwar aus vier Gründen, von denen nur der erste
+kosmetisch ist:
+
+1. **Es ist nicht das Produkt.** Der Kunde bezahlt ein CMS, kein Template mit Restbeschriftung.
+   Der Platz gehört den eigenen Widgets (SEO-Status, wartende Jobs, Redaktionshandbuch).
+2. **Der Seed-Knopf ist ein Datenverlust-Risiko.** Der Link ruft den Seed-Endpoint des Templates
+   auf, der Demo-Inhalte anlegt und dafür Collections leert bzw. überschreibt. In einem
+   Kundenprojekt ist das ein Knopf, der die Redaktionsarbeit von Wochen wegräumt — **einmal
+   nachlesen, was der Seed in eurer Template-Version genau tut**, und dann Route *und* Endpoint
+   entfernen. Ausblenden reicht nicht: Die Route bleibt sonst aufrufbar.
+3. **Es verweist auf Dinge, die es nicht gibt.** „Commit and push" trifft auf einen Redakteur zu,
+   der kein Repo hat, und die Links zeigen in die Payload-Doku statt in eure.
+4. **Es signalisiert, dass niemand aufgeräumt hat.** Genau wie das nie ersetzte
+   `/website-template-OG.webp`, das in
+   [seo-meta-check §1](../seo-meta-check/description.md#1-der-bug-das-website-template-überschreibt-die-defaults-nicht)
+   dokumentiert ist — dasselbe Muster, andere Stelle.
+
+### Die Liste
+
+| Rest | Wo | Was zu tun ist |
+| --- | --- | --- |
+| Willkommens-Block auf dem Dashboard | `admin.components.beforeDashboard` | Eintrag entfernen, Ordner `BeforeDashboard/` löschen |
+| Seed-Endpoint samt Route | `src/endpoints/seed/`, Registrierung in der Config | **Löschen**, nicht auskommentieren |
+| Login-Hinweistext („create your first user") | `admin.components.beforeLogin` | Entfernen — oder durch einen Satz mit Kunden-Support-Kontakt ersetzen |
+| Payload-Branding im Tab | `admin.meta` (`titleSuffix`, `icons`, `openGraph`) | Auf die Marke setzen: eigenes Favicon, `titleSuffix: ' — Marke'` |
+| Demo-Inhalte und Demo-Medien | `pages`, `posts`, `projects`, `media` | Vor Übergabe löschen, inklusive der Bilddateien im Bucket |
+| Demo-Benutzer (`demo@payloadcms.com` o. ä.) | `users` | Löschen; echte Redaktions-Accounts anlegen |
+
+```ts
+// src/payload.config.ts — vorher
+admin: {
+  components: {
+    beforeLogin: ['@/components/BeforeLogin'],
+    beforeDashboard: ['@/components/BeforeDashboard'],
+  },
+}
+
+// nachher — derselbe Platz, aber mit eigenem Inhalt
+admin: {
+  meta: { titleSuffix: ' — Marke', icons: [{ url: '/favicon.svg', type: 'image/svg+xml' }] },
+  components: {
+    beforeDashboard: [
+      '@/components/SeoCheck/Widget#SeoCheckWidget',   // seo-meta-check §5.4
+      '@/components/Handbuch/Widget#HandbuchWidget',   // optional: Kontakt + Kurzanleitung
+    ],
+  },
+}
+```
+
+→ **`beforeDashboard` ist dasselbe Array**, in das der SEO-Status aus
+[seo-meta-check §5.7](../seo-meta-check/description.md#57-verdrahtung) kommt. Wer das Widget
+ergänzt, ohne den Template-Block zu entfernen, hat beides untereinander stehen — der häufigste
+Zustand in unseren Projekten.
+
+→ **Nach dem Entfernen `pnpm payload generate:importmap` laufen lassen.** Die gelöschten
+Komponenten stehen sonst weiter in der Import-Map und zeigen auf Dateien, die es nicht mehr gibt.
+
+### Gegenprüfen
+
+```bash
+# Keine Template-Komponenten mehr registriert oder vorhanden?
+grep -rn "BeforeDashboard\|BeforeLogin\|endpoints/seed" src/ || echo "sauber"
+
+# Seed-Route wirklich weg (nicht nur der Link)?
+curl -s -o /dev/null -w '%{http_code}\n' https://domain.at/next/seed   # erwartet: 404
+```
+
+→ Der zweite Befehl ist der wichtige. Der Link im Dashboard ist schnell entfernt; die Route
+dahinter bleibt, bis der Endpoint gelöscht ist.

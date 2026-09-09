@@ -405,12 +405,13 @@ zum Ausdrucken".
 ```tsx
 // src/components/SeoCheck/View.tsx
 import type { AdminViewServerProps } from 'payload'
-import { Banner, Button, Gutter, Pill, SetStepNav } from '@payloadcms/ui'
+import { Button, Gutter, Pill, SetStepNav } from '@payloadcms/ui'
 import { DefaultTemplate } from '@payloadcms/ui/rsc'
 import { redirect } from 'next/navigation'
 import React from 'react'
 import { ISSUE_LABELS, type IssueId, type Severity } from './checks'
 import { runSeoCheck } from './run'
+import './index.scss'
 
 const PILL: Record<Severity, 'error' | 'success' | 'warning'> = {
   error: 'error', warn: 'warning', ok: 'success',
@@ -426,10 +427,16 @@ export async function SeoCheckView({ initPageResult, params, searchParams }: Adm
 
   const issue = typeof searchParams?.issue === 'string' ? (searchParams.issue as IssueId) : undefined
   const status = typeof searchParams?.status === 'string' ? (searchParams.status as Severity) : undefined
+  const filtered = Boolean(issue || status)
 
   const { checkedAt, rows, truncated } = await runSeoCheck(req.user)
 
-  // Befunde zählen — das ist die eigentliche Arbeitsliste
+  const total: Record<Severity, number> = {
+    error: rows.filter((r) => r.status === 'error').length,
+    warn: rows.filter((r) => r.status === 'warn').length,
+    ok: rows.filter((r) => r.status === 'ok').length,
+  }
+
   const counts = new Map<IssueId, { count: number; severity: Severity }>()
   for (const row of rows) {
     for (const f of row.findings) {
@@ -459,100 +466,184 @@ export async function SeoCheckView({ initPageResult, params, searchParams }: Adm
       visibleEntities={visibleEntities}
     >
       <SetStepNav nav={[{ label: 'SEO-Check' }]} />
-      <Gutter>
+      <Gutter className="seo-check">
         <h1>SEO-Check</h1>
+        <p className="seo-check__summary">
+          {rows.length} Seiten geprüft · <strong>{total.error}</strong> Fehler ·{' '}
+          <strong>{total.warn}</strong> Hinweise · {total.ok} ohne Befund · Stand{' '}
+          {checkedAt.toLocaleString('de-AT')}
+        </p>
 
         {issues.length === 0 ? (
-          <Banner type="success">
-            Alle {rows.length} Seiten haben Titel, Description und Bild — nichts zu tun.
-          </Banner>
+          <p className="seo-check__empty">Nichts zu tun — alle Seiten haben Titel, Description und Bild.</p>
         ) : (
-          <>
-            {/* 1. Arbeitsliste: was ist zu tun, und wie oft */}
-            <ul style={{ display: 'grid', gap: 'calc(var(--base) / 2)', listStyle: 'none', padding: 0 }}>
+          /* Arbeitsliste: eine kompakte Zeile pro Problemart, ganze Zeile klickbar */
+          <table className="table seo-check__issues">
+            <tbody>
               {issues.map(([id, { count, severity }]) => (
-                <li key={id}>
-                  <Button
-                    buttonStyle={issue === id ? 'primary' : 'secondary'} el="link"
-                    to={link({ issue: issue === id ? undefined : id, status: undefined })}
-                  >
-                    <Pill pillStyle={PILL[severity]} size="small">{count}</Pill>
-                    &nbsp;{ISSUE_LABELS[id]}
-                  </Button>
-                </li>
+                <tr key={id} className={issue === id ? 'seo-check__issues--active' : undefined}>
+                  <td className="seo-check__count">{count}</td>
+                  <td>
+                    <a href={link({ issue: issue === id ? undefined : id, status: undefined })}>
+                      {ISSUE_LABELS[id]}
+                    </a>
+                  </td>
+                  <td className="seo-check__severity">
+                    <Pill pillStyle={PILL[severity]} size="small">{STATUS_LABEL[severity]}</Pill>
+                  </td>
+                </tr>
               ))}
-            </ul>
-
-            {/* 2. Statusfilter — ohne Filter zeigt die Tabelle NUR Auffälliges */}
-            <div style={{ display: 'flex', gap: 'calc(var(--base) / 2)', margin: 'var(--base) 0' }}>
-              {(['error', 'warn', 'ok'] as Severity[]).map((s) => (
-                <Button key={s} buttonStyle={status === s ? 'primary' : 'secondary'} el="link"
-                        to={link({ status: status === s ? undefined : s })}>
-                  {STATUS_LABEL[s]} ({rows.filter((r) => r.status === s).length})
-                </Button>
-              ))}
-            </div>
-          </>
+            </tbody>
+          </table>
         )}
 
-        {truncated && (
-          <Banner type="warning">
-            Liste gekürzt — es wurden nur die ersten Dokumente geprüft. Limit in <code>run.ts</code> anheben.
-          </Banner>
-        )}
+        <div className="seo-check__filters">
+          {(['error', 'warn', 'ok'] as Severity[]).map((s) => (
+            <Button
+              key={s} buttonStyle={status === s ? 'primary' : 'secondary'} el="link"
+              margin={false} to={link({ status: status === s ? undefined : s })}
+            >
+              {STATUS_LABEL[s]} ({total[s]})
+            </Button>
+          ))}
+          {filtered && (
+            <Button buttonStyle="ghost" el="link" margin={false} to={`${adminRoute}/seo-check`}>
+              Filter zurücksetzen
+            </Button>
+          )}
+        </div>
+
+        <p className="seo-check__scope">
+          {filtered
+            ? `Gefiltert: ${issue ? ISSUE_LABELS[issue] : STATUS_LABEL[status!]} — ${visible.length} Seiten`
+            : `${visible.length} auffällige von ${rows.length} Seiten (ohne Befund ausgeblendet)`}
+          {truncated ? ' · Liste gekürzt, Limit in run.ts anheben' : ''}
+        </p>
 
         <table className="table">
           <thead>
-            <tr><th>Status</th><th>Seite</th><th>Pfad</th><th>Befunde</th></tr>
+            <tr><th>Status</th><th>Seite</th><th>Befunde</th></tr>
           </thead>
           <tbody>
             {visible.map((row) => (
               <tr key={`${row.collection}-${row.id}`}>
                 <td><Pill pillStyle={PILL[row.status]} size="small">{STATUS_LABEL[row.status]}</Pill></td>
-                <td><a href={`${adminRoute}/collections/${row.collection}/${row.id}`}>{row.title}</a></td>
-                <td><a href={row.path} rel="noreferrer" target="_blank">{row.path}</a></td>
                 <td>
-                  {row.findings.filter((f) => f.severity !== 'ok').map((f) => (
-                    // Deep-Link direkt in das betroffene Feld
-                    <a key={f.id}
-                       href={`${adminRoute}/collections/${row.collection}/${row.id}${anchor(f.field)}`}>
-                      {f.label}
-                    </a>
-                  ))}
+                  <a href={`${adminRoute}/collections/${row.collection}/${row.id}`}>{row.title}</a>
+                  <span className="seo-check__path">
+                    {row.collection} · {row.path ?? 'ohne Slug'}
+                  </span>
+                </td>
+                <td>
+                  <ul className="seo-check__findings">
+                    {row.findings.filter((f) => f.severity !== 'ok').map((f) => (
+                      <li key={f.id}>
+                        <a href={`${adminRoute}/collections/${row.collection}/${row.id}${anchor(f.field)}`}>
+                          {f.label}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
-
-        <p style={{ color: 'var(--theme-elevation-500)' }}>
-          {visible.length} von {rows.length} Seiten · Stand: {checkedAt.toLocaleString('de-AT')}
-        </p>
       </Gutter>
     </DefaultTemplate>
   )
 }
 ```
 
+```scss
+// src/components/SeoCheck/index.scss — Payload-Tokens, kein eigenes Farbsystem
+.seo-check {
+  &__summary, &__scope { color: var(--theme-elevation-500); }
+  &__issues {
+    max-width: 44rem;
+    td { vertical-align: middle; }
+    tr.seo-check__issues--active { background: var(--theme-elevation-50); }
+  }
+  &__count { width: 4rem; text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+  &__severity { width: 7rem; }
+  &__filters { display: flex; flex-wrap: wrap; gap: calc(var(--base) / 4); margin: var(--base) 0; }
+  &__path { display: block; color: var(--theme-elevation-400); font-size: 0.8em; }
+  &__findings { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+}
+```
+
+→ **`margin={false}` an jedem `Button`.** Payloads `Button` bringt standardmäßig einen eigenen
+Außenabstand mit (`margin` ist `true`, sonst greift `btn--no-margin`). Zusammen mit einem `gap`
+im Container ergibt das den doppelten Abstand — im ersten Praxiseinsatz standen die
+Filter-Buttons dadurch mit rund 90 px Abstand **untereinander** statt nebeneinander. Wer
+`Button` in eine Flex-/Grid-Liste setzt, muss `margin={false}` mitgeben.
+
+→ **Die Befundliste ist eine Tabelle, keine Button-Reihe.** Fünf gestapelte Buttons sind bei zehn
+Regeln zwanzig — und die Zahl, auf die es ankommt, steht dann in einem Pill mitten im Text. Als
+Tabelle mit rechtsbündiger, tabellarisch gesetzter Zahl (`font-variant-numeric: tabular-nums`)
+lassen sich die Werte übereinander lesen, und die Liste bleibt bei beliebig vielen Regeln ruhig.
+
+→ **Befunde brauchen eigene Zeilen.** Mehrere `<a>` ohne Trennung rendern zusammengeklebt
+(`meta.title leerDescription fehltKein OG-Bild`) — unlesbar und kein erkennbares Klickziel. Ein
+`ul` mit `display: grid` löst es; Trennzeichen wie `·` reichen nicht, weil die Befunde selbst
+Satzzeichen enthalten.
+
+→ **Aktiver Filter muss sichtbar sein — und rücknehmbar.** Ohne aktiven Zustand und ohne
+„Filter zurücksetzen" steht am Ende „2 von 57 Seiten" da, ohne dass jemand sagen kann, warum. Die
+Zeile darunter schreibt den Zustand deshalb aus (`Gefiltert: Description fehlt — 2 Seiten`)
+statt ihn nur farblich anzudeuten.
+
+→ **Nie eine Dokument-ID als Titel anzeigen.** `#6a958d9f3b0c…` sagt niemandem etwas. Die
+Fallback-Kette in `run.ts` gehört auf `doc.title || doc.meta?.title || doc.slug || 'Ohne Titel'`,
+und die Collection kommt als Unterzeile mit dazu — bei fünf Collections ist „welche Art von
+Seite ist das?" die erste Frage.
+
+→ **Fehlender Slug ist ein eigener Befund, kein kaputter Pfad.** Ein Dokument ohne Slug erzeugt
+sonst Pfade wie `/landingpages/`, die nirgendwohin führen. Als Regel `slug-missing`
+(Severity `error`) aufnehmen und in der Pfadanzeige „ohne Slug" schreiben — dann ist klar, dass
+das die Ursache ist und nicht die Anzeige.
+
 → **`Pill` ist ein `div`, kein Button.** Es nimmt weder `onClick` noch `href` entgegen (nur
-`elementProps`). Klickbare Filter deshalb als `Button` mit `el="link"` + `to`, und `Pill`
-ausschließlich als Statusanzeige darin. Wer `onClick` an ein `Pill` hängt, baut ein Element, das
-mit der Tastatur nicht erreichbar ist — genau das, was
-[`accessibility/`](../accessibility/description.md) später anschlägt.
+`elementProps`). Klickbare Elemente deshalb als `Button`/`a`, `Pill` ausschließlich als
+Statusanzeige darin. Wer `onClick` an ein `Pill` hängt, baut ein Element, das mit der Tastatur
+nicht erreichbar ist — genau das, was [`accessibility/`](../accessibility/description.md)
+anschlägt.
 
-→ **Emojis raus.** 🟢/🟡/🔴 tragen den Status in der ersten Version **allein**: im Screenreader
-kommt „großer grüner Kreis" an, bei Rot-Grün-Schwäche nichts Unterscheidbares. `Pill` mit Text
-löst beides — und sieht im **Dark Mode** richtig aus, weil es die Admin-Tokens statt eigener
-Inline-Farben nutzt. Dasselbe gilt für die restlichen Inline-Styles: nur noch `var(--base)`,
-`var(--theme-elevation-*)`, sonst driftet die View bei jedem Admin-Theme-Update weg.
+→ **Emojis raus.** 🟢/🟡/🔴 tragen den Status sonst **allein**: im Screenreader kommt „großer
+grüner Kreis" an, bei Rot-Grün-Schwäche nichts Unterscheidbares. `Pill` mit Text löst beides und
+sieht im **Dark Mode** richtig aus, weil es die Admin-Tokens nutzt. Dasselbe gilt für Abstände
+und Farben: in eine `.scss` neben der Komponente, mit `var(--base)` und
+`var(--theme-elevation-*)`, nicht als Inline-Styles — sonst driftet die View bei jedem
+Admin-Theme-Update weg.
 
-→ **Default-Filter ist „nicht OK".** Ohne Filter zeigt die Tabelle nur Fehler und Hinweise. Eine
-Liste, in der 90 % der Zeilen „alles gut" sagen, wird nach dem zweiten Mal nicht mehr geöffnet.
+→ **Default-Ansicht ist „nicht OK".** Ohne Filter zeigt die Tabelle nur Fehler und Hinweise, und
+die Zeile darüber sagt das auch (`41 auffällige von 57 Seiten`). Eine Liste, in der 90 % der
+Zeilen „alles gut" sagen, wird nach dem zweiten Mal nicht mehr geöffnet.
 
-→ **Mehrsprachige Projekte:** `runSeoCheck` pro Locale laufen lassen und die Locale als Spalte
-mitführen. Sonst prüft die View stillschweigend nur die Default-Locale — und meldet gleichzeitig
-falsche „Titel doppelt"-Fehler, sobald zwei Sprachversionen denselben Titel tragen (Duplikate
-immer **innerhalb** einer Locale zählen).
+→ **Mehrsprachige Projekte:** `runSeoCheck` pro Locale laufen lassen und die Locale in die
+Unterzeile mit aufnehmen. Sonst prüft die View stillschweigend nur die Default-Locale — und
+meldet gleichzeitig falsche „Titel doppelt"-Fehler, sobald zwei Sprachversionen denselben Titel
+tragen (Duplikate immer **innerhalb** einer Locale zählen).
+
+### 5.3.1 Regeln nachschärfen, sobald echte Zahlen da sind
+
+Der erste Lauf gegen eine bestehende Seite liefert typischerweise ein Bild wie dieses: 2 Fehler,
+**39 Hinweise**, 16 ohne Befund. Bei 39 Hinweisen passiert genau nichts — die Liste wird als
+Grundrauschen gelesen und geschlossen. Zwei Regeln erzeugen fast das ganze Rauschen:
+
+| Befund | Warum es rauscht | Konsequenz |
+| --- | --- | --- |
+| „Kein OG-Bild (Site-Default greift)" auf 28 Seiten | Wenn ein Site-Default gepflegt ist, ist das **Absicht**, kein Mangel. Niemand pflegt 28 einzelne OG-Bilder. | Auf `ok` herabstufen, sobald `seo-defaults.image` gesetzt ist — und einmal aggregiert als Info-Zeile ausgeben, nicht pro Seite. |
+| „Titel-Länge außerhalb 30–60" auf 25 Seiten | Die Untergrenze ist geraten. Ein kurzer, präziser Titel ist kein Fehler; abgeschnitten wird erst über 60. | Nur `> 60` als Hinweis behalten, `< 30` ganz streichen oder als reine Info führen. |
+
+→ **Faustregel:** Eine Regel, die auf der Hälfte der Seiten anschlägt und die niemand einzeln
+beheben wird, ist keine Regel, sondern eine Projekteinstellung. Entweder sie wird zur
+Site-weiten Aussage („OG-Default ist gesetzt: ja") oder sie fliegt raus. Sonst verliert der Check
+seine einzige Funktion — dass ein roter Punkt etwas bedeutet.
+
+→ **Die zwei echten Fehler im Beispiel sind wertvoll:** beide Seiten haben *gleichzeitig* keinen
+Meta-Titel, keine Description und kein Bild — also schlicht nie SEO-Felder gepflegt bekommen. Das
+ist der Fall, für den das Dashboard gebaut wurde, und er geht in 39 Hinweisen unter.
 
 ### 5.4 Das Dashboard-Widget
 
@@ -734,9 +825,10 @@ aufgelöst wie View und Widget — fehlt der Lauf, ist die Sidebar einfach leer,
 
 | Feld | Zielbereich | Verstoß |
 | --- | --- | --- |
-| `meta.title` | 30–60 Zeichen, pro Seite eindeutig | leer → Hinweis (Fallback greift); doppelt → Fehler |
-| `meta.description` | 70–160 Zeichen, pro Seite eindeutig | leer → Fehler; doppelt → Fehler |
-| `meta.image` | 1200×630, JPG/PNG, `alt` gesetzt | fehlt → Hinweis (Site-Default greift); nicht populiert → Fehler (depth-Bug) |
+| `meta.title` | **höchstens 60 Zeichen**, pro Seite eindeutig | leer → Hinweis (Fallback greift); > 60 → Hinweis (wird abgeschnitten); doppelt → Fehler. **Keine Untergrenze** — kurze Titel sind kein Mangel, siehe 5.3.1 |
+| `meta.description` | 70–160 Zeichen, pro Seite eindeutig | leer → Fehler; doppelt → Fehler; Länge → Hinweis |
+| `meta.image` | 1200×630, JPG/PNG, `alt` gesetzt | fehlt **und kein Site-Default** → Hinweis; fehlt **mit** Site-Default → `ok`; nicht populiert → Fehler (depth-Bug) |
+| `slug` | vorhanden | leer → Fehler (Dokument hat keine erreichbare URL) |
 | `noIndex` | bewusst gesetzt | schaltet alle anderen Regeln für die Seite ab |
 
 ## Quick-Checkliste
@@ -751,7 +843,11 @@ aufgelöst wie View und Widget — fehlt der Lauf, ist die Sidebar einfach leer,
 8. `pnpm payload generate:importmap` — auch in der CI vor dem Build
 9. `runSeoCheck` mit `overrideAccess: false` + `user` und hartem `limit`
 10. Findings mit `id` **und** `field` versehen — nur dann führt der Befund per `#field-meta__…`-Anker ins richtige Feld
-11. Statt Emoji-Punkten `Pill`/`Banner` aus `@payloadcms/ui`; klickbare Filter als `Button el="link"`, nie als `Pill`
+11. Statt Emoji-Punkten `Pill`/`Banner` aus `@payloadcms/ui`; klickbare Filter als `Button el="link"`, nie als `Pill` — und an **jedem** `Button` in einer Liste `margin={false}`, sonst addiert sich Payloads Standardabstand auf den eigenen `gap`
+11a. Befunde je Zeile als `ul`/`li` ausgeben (mehrere `<a>` ohne Trennung kleben zusammen), Abstände und Farben in eine `.scss` neben der Komponente statt als Inline-Styles
+11b. Aktiven Filter sichtbar machen **und** „Filter zurücksetzen" anbieten; die sichtbare Zeilenzahl im Klartext erklären (`41 auffällige von 57 Seiten`)
+11c. Nie eine Dokument-ID als Titel zeigen — Fallback `title || meta.title || slug || 'Ohne Titel'`, Collection als Unterzeile
+11d. Nach dem ersten Lauf gegen echte Daten die Regeln nachschärfen (siehe 5.3.1): was auf der Hälfte der Seiten anschlägt und nie einzeln behoben wird, ist eine Projekteinstellung, keine Regel
 12. Regeln in `checkDoc` (ein Dokument, clientfähig) und `buildRows` (site-weit) trennen; Live-Check als `ui`-Feld über `seoPlugin({ fields })` in die Sidebar hängen
 13. `unstable_cache` mit Tag `seo-check` + `revalidateTag` im Hook, `checkedAt` in der View anzeigen
 14. Vor Livegang: OG-Tags mit dem Facebook Sharing Debugger / LinkedIn Post Inspector gegenprüfen (beide cachen — nach Fix Re-Scrape auslösen)

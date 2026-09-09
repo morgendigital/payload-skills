@@ -422,6 +422,13 @@ wirklich nichts durchgerutscht ist:
 - [ ] Eigene, gebrandete 404-Seite — nicht Next.js-Default.
 - [ ] Payload-Admin: Default-Passwort geändert (siehe
       [security-check §13](../security-check/description.md)).
+- [ ] **Keine Template-Reste im Admin**: kein „Welcome to your dashboard"-Block, kein
+      Login-Hinweistext, kein Payload-Branding im Browser-Tab, keine Demo-Inhalte und
+      Demo-Benutzer (siehe [payload-start Todo 5](../payload-start/description.md)).
+- [ ] **Seed-Route ist weg, nicht nur der Link:**
+      `curl -s -o /dev/null -w '%{http_code}' https://domain.at/next/seed` liefert `404`. Der
+      Endpoint legt Demo-Inhalte an und räumt dafür Collections auf — in einem laufenden
+      Kundenprojekt ist das ein Knopf, der Redaktionsarbeit löscht.
 - [ ] [lighthouse-check](../lighthouse-check/description.md)-Gate bestanden (SEO-Score darin
       ist die Kurzform von Todo 6, ersetzt es aber nicht).
 
@@ -456,4 +463,6 @@ wirklich nichts durchgerutscht ist:
 - [ ] Secrets & Logs aus Todo 7 gegen die Produktions-URL geprüft: `.env`/`.git`/Source Maps
       nicht erreichbar, keine Stack-Traces/Env-Dumps in Fehler-Responses, keine offenen
       Debug-Endpoints, Git-Historie bei Repo-Übergabe gescannt.
+- [ ] Admin ist übergabefertig: keine Template-Reste, Seed-Route entfernt (404), eigenes
+      Favicon und Titel-Suffix, Demo-Inhalte und Demo-Benutzer gelöscht.
 - [ ] Rundgang aus Todo 8 abgehakt.
