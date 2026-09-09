@@ -229,7 +229,7 @@ kosmetisch ist:
 | --- | --- | --- |
 | Willkommens-Block auf dem Dashboard | `admin.components.beforeDashboard` | Eintrag entfernen, Ordner `BeforeDashboard/` löschen |
 | Seed-Endpoint samt Route | `src/endpoints/seed/`, Registrierung in der Config | **Löschen**, nicht auskommentieren |
-| Login-Hinweistext („create your first user") | `admin.components.beforeLogin` | Entfernen — oder durch einen Satz mit Kunden-Support-Kontakt ersetzen |
+| Login-Hinweistext des Templates | `admin.components.beforeLogin` | **Slot behalten, Inhalt ersetzen** — siehe unten |
 | Payload-Branding im Tab | `admin.meta` (`titleSuffix`, `icons`, `openGraph`) | Auf die Marke setzen: eigenes Favicon, `titleSuffix: ' — Marke'` |
 | Demo-Inhalte und Demo-Medien | `pages`, `posts`, `projects`, `media` | Vor Übergabe löschen, inklusive der Bilddateien im Bucket |
 | Demo-Benutzer (`demo@payloadcms.com` o. ä.) | `users` | Löschen; echte Redaktions-Accounts anlegen |
@@ -247,6 +247,7 @@ admin: {
 admin: {
   meta: { titleSuffix: ' — Marke', icons: [{ url: '/favicon.svg', type: 'image/svg+xml' }] },
   components: {
+    beforeLogin: ['@/components/BeforeLogin'],        // bleibt — nur der Inhalt ist neu
     beforeDashboard: [
       '@/components/SeoCheck/Widget#SeoCheckWidget',   // seo-meta-check §5.4
       '@/components/Handbuch/Widget#HandbuchWidget',   // optional: Kontakt + Kurzanleitung
@@ -254,6 +255,42 @@ admin: {
   },
 }
 ```
+
+### `beforeLogin` behalten — nur den Inhalt austauschen
+
+Der Slot ist kein Template-Rest, sondern die einzige Stelle, an der die Login-Seite etwas sagen
+kann. Raus muss der Text des Templates (Verweise auf „create your first user" und in die
+Payload-Doku); rein gehört, was der Redakteur an genau dieser Stelle braucht:
+
+```tsx
+// src/components/BeforeLogin/index.tsx
+export const BeforeLogin: React.FC = () => (
+  <div className="before-login">
+    <p>
+      <strong>Redaktionsbereich — Marke</strong>
+      <br />
+      Hier pflegen Sie die Inhalte Ihrer Website.
+    </p>
+    <p>
+      Zugang vergessen oder Probleme beim Anmelden?{' '}
+      <a href="mailto:support@northlight.at">support@northlight.at</a>
+    </p>
+  </div>
+)
+```
+
+- **Wer hilft, wenn es klemmt.** Der häufigste Support-Fall ist „ich komme nicht rein" — und
+  genau dann ist die Adresse der Agentur nicht zur Hand. Ein Satz hier spart pro Projekt mehrere
+  Rückfragen über Umwege.
+- **Welche Seite das überhaupt ist.** Wer drei Kundenprojekte betreut, sieht dreimal dasselbe
+  Payload-Login. Marke plus Projektname beantworten das in einer Zeile.
+- **Bei Keycloak-Projekten steht hier der eigentliche Weg hinein** — der Link auf das
+  Keycloak-Login bzw. die Account-Konsole, weil das lokale Passwortformular dort bewusst nicht
+  mehr benutzt wird ([keycloak](../keycloak/description.md)).
+
+→ **Die Login-Seite ist öffentlich.** Also eine allgemeine Support-Adresse statt einer
+persönlichen (sie wird abgegriffen), keine Beispiel-Benutzernamen, keine Hinweise auf
+Rollennamen oder interne Systeme. Was hier steht, liest jeder, der die URL kennt.
 
 → **`beforeDashboard` ist dasselbe Array**, in das der SEO-Status aus
 [seo-meta-check §5.7](../seo-meta-check/description.md#57-verdrahtung) kommt. Wer das Widget
@@ -267,7 +304,9 @@ Komponenten stehen sonst weiter in der Import-Map und zeigen auf Dateien, die es
 
 ```bash
 # Keine Template-Komponenten mehr registriert oder vorhanden?
-grep -rn "BeforeDashboard\|BeforeLogin\|endpoints/seed" src/ || echo "sauber"
+grep -rn "BeforeDashboard\|endpoints/seed" src/ || echo "sauber"
+# BeforeLogin bleibt — hier nur prüfen, dass der Template-Text ersetzt wurde:
+grep -rn "create your first user\|payloadcms.com/docs" src/components/BeforeLogin/ || echo "eigener Text"
 
 # Seed-Route wirklich weg (nicht nur der Link)?
 curl -s -o /dev/null -w '%{http_code}\n' https://domain.at/next/seed   # erwartet: 404
