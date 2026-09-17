@@ -61,6 +61,11 @@ Verwendete Environment-Variablen:
 - `NEXT_PUBLIC_GTM_ID`
 - `NEXT_PUBLIC_META_PIXEL_ID`
 - `NEXT_PUBLIC_GA4_MEASUREMENT_ID`
+- `NEXT_PUBLIC_GOOGLE_TAG_ID` (`GT-…`)
+- `NEXT_PUBLIC_GOOGLE_ADS_ID` (`AW-…`)
+
+⚠️ Diese Variablen **nicht** im Client-Component aus `process.env` lesen — siehe „Falle: IDs kommen
+im Live-Build nicht an“ weiter unten.
 
 Wenn die jeweiligen Variablen vorhanden sind, werden folgende Skripte registriert:
 
@@ -73,6 +78,87 @@ Wichtig:
 - Die Skripte werden nicht manuell im Layout eingebunden.
 - Sie werden dem `ConsentManagerProvider` über `options.scripts` übergeben.
 - Dadurch ist die Script-Verwaltung an den Consent-Manager gekoppelt.
+
+## Falle: IDs kommen im Live-Build nicht an
+
+Gefunden an neurauter-versichert.at (Next.js 16.3, `@c15t/nextjs` 2.2, Dokploy, Secrets aus
+Infisical). `NEXT_PUBLIC_GTM_ID` und `NEXT_PUBLIC_META_PIXEL_ID` standen korrekt in Infisical/prod,
+der Banner funktionierte, aber auch nach „Alle akzeptieren“ lud weder `gtm.js` noch `fbevents.js`.
+Kein Fehler, keine Warnung.
+
+### Ursache
+
+Der Build lief zweistufig (`--experimental-build-mode generate-env` → `compile`, siehe
+`payload-start` und `static-rendering`). Dabei wird `process.env.NEXT_PUBLIC_*` im Client-Bundle
+nicht durch den Wert ersetzt, sondern durch eine Laufzeit-Abfrage auf `window`:
+
+```js
+r = window.NEXT_PUBLIC_GTM_ID, a = window.NEXT_PUBLIC_META_PIXEL_ID
+```
+
+Diese Globals setzt niemand, also ist `buildScripts()` leer und c15t registriert kein einziges
+Skript. Variablen, die beim Build gar nicht da waren (z. B. GA4), bleiben als `process.env.X`
+stehen und sind im Browser ebenfalls leer.
+
+Prüfen, ohne Consent zu klicken:
+
+```js
+// Browser-Konsole auf der Live-Seite
+window.NEXT_PUBLIC_GTM_ID // undefined => Tracking lädt nie
+```
+
+oder die Chunks nach der ID durchsuchen (`curl` auf die `/_next/static/chunks/*.js` aus dem HTML,
+`grep GTM-`). Taucht nur `NEXT_PUBLIC_GTM_ID` als Name auf und nie `GTM-…`, ist es dieser Fall.
+
+### Lösung: IDs zur Laufzeit auf dem Server lesen
+
+Die Tracking-IDs nicht im Client-Component aus `process.env` lesen, sondern in einer
+Server-Komponente (Providers bzw. Layout) und als Prop an den Client-Provider geben. Das
+funktioniert unabhängig vom Build-Modus, und eine geänderte ID braucht nur einen Container-Neustart
+statt eines Rebuilds.
+
+```tsx
+// src/providers/index.tsx — Server Component, kein 'use client'
+const getTrackingIds = () => ({
+  gtmId: process.env.NEXT_PUBLIC_GTM_ID,
+  ga4Id: process.env.NEXT_PUBLIC_GA4_MEASUREMENT_ID,
+  googleTagId: process.env.NEXT_PUBLIC_GOOGLE_TAG_ID,
+  googleAdsId: process.env.NEXT_PUBLIC_GOOGLE_ADS_ID,
+  metaPixelId: process.env.NEXT_PUBLIC_META_PIXEL_ID,
+})
+
+export const Providers = ({ children }: { children: React.ReactNode }) => (
+  <TrackingProvider ids={getTrackingIds()}>{children}</TrackingProvider>
+)
+```
+
+```tsx
+// TrackingProvider.tsx — 'use client'
+export const TrackingProvider = ({ children, ids }: { children: React.ReactNode; ids: TrackingIds }) => (
+  <ConsentManagerProvider options={{ /* … */ scripts: buildScripts(ids) }}>
+```
+
+Die IDs sind öffentlich (stehen ohnehin im ausgelieferten HTML), sie als Prop zu serialisieren ist
+unkritisch. Den `NEXT_PUBLIC_`-Präfix trotzdem behalten, damit bestehende Infisical-/Dokploy-Einträge
+weiter passen.
+
+## Mehrere Google-Tags (GA4, `GT-…`, Google Ads `AW-…`)
+
+c15t vergibt die Script-ID aus dem Vendor-Namen. Jeder `gtag(...)`-Aufruf heißt damit `gtag` —
+registriert man GA4, einen Google-Tag und Google Ads nebeneinander, überschreiben sie sich
+gegenseitig. Jedem Aufruf eine eigene ID über `script.id` geben:
+
+```ts
+if (ga4Id) scripts.push(gtag({ id: ga4Id, category: 'measurement', script: { id: 'gtag-ga4' } }))
+if (googleTagId) scripts.push(gtag({ id: googleTagId, category: 'marketing', script: { id: 'gtag-google-tag' } }))
+if (googleAdsId) scripts.push(gtag({ id: googleAdsId, category: 'marketing', script: { id: 'gtag-google-ads' } }))
+```
+
+Kategorien: GA4 → `measurement`, `GT-…`/`AW-…` (Ads, Conversions) → `marketing`.
+
+Vorher mit dem Kunden bzw. der Agentur klären, ob diese Tags schon **im GTM-Container** angelegt
+sind. Wenn ja, nur `NEXT_PUBLIC_GTM_ID` setzen — sonst wird doppelt gemessen. Die direkte
+gtag-Einbindung ist für den Fall, dass die IDs ohne GTM-Pflege geliefert werden.
 
 ## Wie das allgemeine Event-Tracking funktioniert
 
