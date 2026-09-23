@@ -1,6 +1,8 @@
 # Neues Payload-Website-Setup — Checkliste
 
-Reihenfolge: **Todo 1** Media-Defaults → **Todo 2** S3 mit `@payloadcms/storage-s3` → **Todo 3** Production-Build → **Todo 4** stabiler Server-Actions-Key → **Todo 5** Template-Reste aus dem Admin entfernen.
+Reihenfolge: **Todo 0** Template lauffähig machen → **Todo 1** Media-Defaults → **Todo 2** S3 mit `@payloadcms/storage-s3` → **Todo 3** Production-Build → **Todo 4** stabiler Server-Actions-Key → **Todo 5** Template-Reste aus dem Admin entfernen.
+
+> **Todo 0 steht am Ende dieser Datei, gehört aber an den Anfang der Arbeit.** Ab Payload 3.90 / Next 16 ist das offizielle Website-Template nicht lauffähig, wie es ausgeliefert wird: `pnpm build` ruft einen Befehl auf, den es nicht gibt, `pnpm lint` stürzt ab, und `tsc` bricht ab, bevor es eine Datei ansieht. Wer das nicht zuerst behebt, sucht die Ursache später im eigenen Code.
 
 **Deployment:** Standard ist **Dokploy auf einem Hetzner-Server** (Docker, eigene VM) — **nicht** Vercel. Upload-Grenzen kommen hier vor allem von **Payload** (`upload.limits`) und vom **Reverse Proxy** (z. B. Nginx Proxy Manager: `client_max_body_size`), nicht von einem Serverless-Body-Limit.
 
@@ -314,3 +316,129 @@ curl -s -o /dev/null -w '%{http_code}\n' https://domain.at/next/seed   # erwarte
 
 → Der zweite Befehl ist der wichtige. Der Link im Dashboard ist schnell entfernt; die Route
 dahinter bleibt, bis der Endpoint gelöscht ist.
+
+## Todo 0: Das Template ist nicht lauffähig, wie es ausgeliefert wird
+
+**Betrifft:** Payload 3.90.x mit Next.js 16.3, TypeScript 6, ESLint 9 — also jedes Projekt,
+das ab jetzt neu aufgesetzt wird. Gemessen an frechinger (Template-Tag `v3.90.1`, Node 24,
+pnpm 10).
+
+Vier Fehler, die alle vor der ersten Zeile eigenem Code auftreten. Drei davon lassen die
+Standard-Skripte hart fehlschlagen; der vierte ist still und deshalb der teuerste.
+
+### 0.1 Vom Release-Tag klonen, nicht von `main`
+
+`templates/website` auf `main` ist der Canary-Stand und benutzt APIs, die im letzten
+Release noch nicht existieren. Konkret importiert `src/collections/Media.ts` dort
+`createFolderField` aus `payload` — mit der veröffentlichten 3.90.1 bricht schon das
+Laden der Config ab:
+
+```
+SyntaxError: The requested module 'payload' does not provide an export named 'createFolderField'
+```
+
+Also den Tag nehmen, der zur installierten Payload-Version passt:
+
+```bash
+TAG=$(gh api repos/payloadcms/payload/releases/latest --jq '.tag_name')
+git clone --depth 1 --branch "$TAG" --filter=blob:none --sparse \
+  https://github.com/payloadcms/payload.git /tmp/payload-src
+cd /tmp/payload-src && git sparse-checkout set templates/website
+```
+
+Und in der `package.json` alle `workspace:*` durch genau diese Version ersetzen — im
+Monorepo lösen sie sich auf, im Kundenprojekt nicht.
+
+### 0.2 `pnpm build` ruft einen Befehl auf, den es nicht gibt
+
+Das Template setzt:
+
+```json
+"build": "cross-env NODE_OPTIONS=--no-deprecation payload build"
+```
+
+`payload build` ist in 3.90.1 **kein Befehl**. Der CLI antwortet mit
+`Unknown command: "build"` und listet die verfügbaren Befehle — `generate:types`,
+`generate:importmap`, `migrate*`, `run`, `jobs:*`, `info`. Kein `build`.
+
+Fällt in der Praxis erst beim ersten Deployment auf, weil lokal alle `pnpm dev` benutzen.
+
+→ Todo 3 ersetzt dieses Skript ohnehin durch `node scripts/build.mjs`. Der Punkt hier ist
+nur: **nicht suchen, warum der Build auf Dokploy nichts tut** — er ist nie gelaufen.
+
+→ Im Wrapper daran denken, dass die Vorabprüfungen **vor** `next build` laufen und die
+`.env`-Dateien deshalb noch nicht geladen sind. Ohne eigenes `dotenv.config()` meldet der
+Wrapper eine fehlende `DATABASE_URL`, die in der `.env` längst steht.
+
+### 0.3 `pnpm lint` stürzt ab
+
+```
+TypeError: Converting circular structure to JSON
+    at ConfigValidator.formatErrors (@eslint/eslintrc/lib/shared/config-validator.js:299)
+```
+
+Die `eslint.config.mjs` des Templates schleust `eslint-config-next` über `FlatCompat`
+ein. `eslint-config-next` 16 liefert aber **native Flat-Configs** — der Kompatibilitäts-
+Umweg läuft in einen Zirkelbezug.
+
+```js
+// vorher — FlatCompat
+import { FlatCompat } from '@eslint/eslintrc'
+const compat = new FlatCompat({ baseDirectory: __dirname })
+const eslintConfig = [...compat.extends('next/core-web-vitals', 'next/typescript'), /* … */]
+
+// nachher — direkt importieren
+import nextCoreWebVitals from 'eslint-config-next/core-web-vitals'
+import nextTypescript from 'eslint-config-next/typescript'
+const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, /* … */]
+```
+
+Danach läuft der Lint — und meldet auf unverändertem Template-Code fünf Fehler aus den
+neuen React-Compiler-Regeln (`setState` im Effect-Body in `Header/Component.client.tsx`
+und beiden Theme-Providern, Ref-Zugriff während des Renders in `components/Card`). Die
+gehören in einen eigenen Durchgang, nicht ins Setup-Ticket — aber man sollte wissen, dass
+sie da sind, bevor man Lint in die CI hängt.
+
+### 0.4 `tsc` läuft gar nicht erst durch — und das ist der stille Fehler
+
+TypeScript 6 meldet zuerst:
+
+```
+tsconfig.json(4,5): error TS5101: Option 'baseUrl' is deprecated and will stop functioning in TypeScript 7.0.
+```
+
+Das ist ein **harter Abbruch, kein Hinweis**: Der Typecheck bricht ab, bevor er eine
+einzige Datei ansieht. Wer nur auf den Exit-Code schaut, hält das für „ein Fehler, schnell
+behoben" — tatsächlich verdeckt es alles dahinter.
+
+`"ignoreDeprecations": "6.0"` setzen — und `baseUrl` dabei **behalten**. Nimmt man es
+stattdessen heraus, tauschen sich die Fehler nur aus: Das Template importiert an fünf
+Stellen bare Pfade (`from 'src/payload-types'`, `from 'src/utilities/formatDateTime'`),
+die genau über `baseUrl` aufgelöst wurden. TypeScript 6 löst sie ohnehin nicht mehr auf.
+
+Betroffen: `blocks/Banner/Component.tsx`, `heros/PostHero/index.tsx`,
+`utilities/getGlobals.ts`, `utilities/getDocument.ts`,
+`collections/Posts/hooks/populateAuthors.ts`.
+
+```bash
+grep -rl "from 'src/" src --include='*.ts' --include='*.tsx' | xargs sed -i '' "s|from 'src/|from '@/|g"
+```
+
+→ **Warum das mehr ist als fünf Imports:** `getGlobals.ts` und `getDocument.ts` leiten ihre
+Typen aus dem fehlgeschlagenen Import ab. Solange er nicht auflöst, ist `Config` still `any`,
+`keyof Config['globals']` wird zu `string | number | symbol`, und die Generics der beiden
+Cache-Helfer sind damit komplett wirkungslos — ohne dass irgendetwas rot wäre. Erst nach
+dem Fix steht dort wieder `'header' | 'footer'`. Ein Typecheck, der nicht läuft, meldet
+eben auch keine Typfehler.
+
+### Gegenprüfen
+
+```bash
+npx tsc --noEmit && echo "typecheck ok"
+pnpm lint
+pnpm build            # muss echtes SSG erzeugen, nicht nur durchlaufen:
+node -e "const m=require('./.next/prerender-manifest.json'); console.log(Object.keys(m.routes).length)"
+```
+
+Der letzte Befehl ist der entscheidende — ein grüner Build ohne prerenderte Routen ist
+genau der Zustand, den [static-rendering](../static-rendering/description.md) beschreibt.
