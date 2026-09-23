@@ -14,6 +14,43 @@
 
 ---
 
+## Falle: `altcha-lib` 2.x exportiert eine andere API
+
+Gemessen an frechinger (23.09.2026, `altcha-lib` 2.5.0, `altcha` 3.2.3).
+
+Der Code auf dieser Seite ist gegen die **V1-API** geschrieben. Seit
+`altcha-lib` 2.x liegt unter dem Hauptpfad die **V2-API**, und die ist
+inkompatibel:
+
+```ts
+import { createChallenge, verifySolution } from 'altcha-lib'   // = V2
+```
+
+```
+error TS2353: 'hmacKey' does not exist in type 'CreateChallengeOptions'
+error TS2554: verifySolution — Expected 1 arguments, but got 2
+error TS2322: Type 'VerifySolutionResult' is not assignable to type 'boolean'
+```
+
+V2 verlangt `algorithm`, `cost` und `counterMode` statt `hmacKey`/`maxNumber`,
+und `verifySolution` gibt ein Ergebnisobjekt statt eines `boolean` zurück.
+
+**Die hier dokumentierte Variante liegt unter dem `/v1`-Subpfad:**
+
+```ts
+import { createChallenge } from 'altcha-lib/v1'
+import { verifySolution } from 'altcha-lib/v1'
+```
+
+→ Das ist kein Downgrade: V1 erzeugt das klassische Challenge-Format
+(`{algorithm, challenge, salt, signature}`), das jede Widget-Version versteht.
+V2 ist ein neues Protokoll, für das auch das Widget anders konfiguriert werden
+müsste.
+
+→ Erkennbar ist es nur am Typecheck. Wer `// @ts-expect-error` darüberschreibt
+oder ohne Typecheck deployt, bekommt eine Challenge, die das Widget nicht lösen
+kann — und damit ein Formular, das niemand absenden kann.
+
 ## Challenge-Route (GET)
 
 Erzeugt eine signierte Challenge; der Browser-Widget ruft diese URL ab.
@@ -547,6 +584,42 @@ löst dagegen eine echte Mail aus. Den nur bewusst, mit erkennbarem Testtext,
 und nach Rücksprache mit dem Team machen.
 
 ---
+
+## Variante C: Zeitschutz mit signiertem Zeitstempel
+
+Eine Verschärfung des zeitbasierten Honeypots, gemessen an frechinger. Statt
+eines Klartext-Zeitstempels im versteckten Feld wird der **Rendering-Zeitpunkt
+serverseitig signiert** mitgegeben:
+
+```ts
+const signiere = (wert: string) =>
+  createHmac('sha256', process.env.PAYLOAD_SECRET!).update(wert).digest('hex')
+
+export const erzeugeZeitmarke = () => {
+  const jetzt = String(Date.now())
+  return `${jetzt}.${signiere(jetzt)}`
+}
+```
+
+Geprüft wird Signatur **und** Alter: unter 3 s oder älter als 2 h → abgelehnt.
+
+**Was das besser macht:** `contact_time` ist ein Klartextwert, den ein Bot
+schlicht auf `Date.now() - 5000` setzt. Die signierte Variante lässt sich nicht
+erfinden — ein Bot muss einen vom Server ausgegebenen Wert benutzen und ihn
+mindestens drei Sekunden liegen lassen.
+
+**Warum es den Passwortmanager-Vorfall nicht wiederholt:** Das Feld ist
+`type="hidden"`, kein off-screen positioniertes `type="text"`. Passwortmanager
+füllen versteckte Felder nicht aus — der Vorfall betraf das sichtbare Textfeld,
+das nur visuell weggeschoben war.
+
+**Eine bewusste Abweichung dabei:** Bei einem Treffer wird ein **Fehler**
+gemeldet, kein vorgetäuschter Erfolg. Der Grund ist derselbe Vorfall: Ein Mensch,
+der fälschlich hängenbleibt, soll es merken und erneut versuchen können. Die
+Meldung bleibt neutral („Das hat nicht geklappt"), verrät also nicht, welche
+Schranke gegriffen hat. Wer die Bot-Tarnung höher gewichtet als die verlorene
+Anfrage, bleibt bei `{ success: true }` — die Entscheidung gehört ins Projekt,
+nicht in die Bibliothek.
 
 ## Checkliste für weitere Formulare
 

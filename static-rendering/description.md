@@ -211,6 +211,39 @@ export const revalidateMedia: CollectionAfterChangeHook = ({ doc, previousDoc, r
 
 Löschungen brechen Seiten genauso und purgen deshalb immer.
 
+## Regel 4b — `useSearchParams` nimmt die aufrufende Komponente aus dem Prerender
+
+Verwandt mit dem `draftMode()`-Fall aus
+[live-preview](../live-preview/description.md), aber stiller: `useSearchParams`
+macht die Route nicht dynamisch — es nimmt **die Komponente, die es aufruft**,
+aus dem statischen HTML. Steht der Aufruf im Formular selbst, fällt das ganze
+Formular heraus und die Suspense-Rückfallebene (oft `null`) landet in der
+Auslieferung.
+
+Gemessen an frechinger: Ein Kontaktformular las einen Produkt-Slug aus der URL.
+Die Seite blieb `● (SSG)`, lieferte weiter `x-nextjs-cache: HIT` — und enthielt
+**null `<form>`-Tags**. Sichtbar wurde das Formular erst nach der Hydration.
+
+```bash
+# Der Build sagt nichts darüber. Das ausgelieferte HTML schon:
+curl -s https://example.com/kontakt | grep -c '<form'
+```
+
+**Fix:** den Aufruf in eine eigene, minimale Komponente mit eigener
+`Suspense`-Grenze auslagern. Dann fällt nur das eine Feld aus dem Prerender:
+
+```tsx
+'use client'
+export const ProduktFeld = () => {
+  const produkt = useSearchParams().get('produkt')
+  return produkt ? <input type="hidden" name="produkt" value={produkt} /> : null
+}
+```
+
+→ Gilt für jede Komponente, die Query-Parameter liest — Filter, Paginierung,
+vorbelegte Formulare. Die Faustregel: **so nah wie möglich an das eine Element,
+das den Parameter wirklich braucht.**
+
 ## Regel 5 — Prerender-Blocker außerhalb der Locale-Routen finden
 
 Jede statische Route ohne Params wird beim Build gerendert. Zieht ihr Layout ein Payload-Global

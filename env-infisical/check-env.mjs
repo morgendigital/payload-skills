@@ -67,17 +67,30 @@ const KATALOG = [
     quelle: 'extern',
     wenn: () => hat('resend') || hat('@payloadcms/email-resend'),
   })),
-  ...['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASS'].map((key) => ({
+  // SMTP_PASSWORD, nicht SMTP_PASS — so heisst es im Adapter aus
+  // form-submissions-email. Ein falscher Name im Katalog meldet die Variable als
+  // "aus dem Code" fehlend und die richtige als verwaist.
+  ...['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD'].map((key) => ({
     key,
     quelle: 'extern',
     wenn: () => hat('nodemailer') || hat('@payloadcms/email-nodemailer'),
     optional: true,
   })),
+  {
+    key: 'EMAIL_NOTIFY_TO',
+    quelle: 'extern',
+    wenn: () => hat('resend') || hat('nodemailer'),
+    proEnv: true,
+    hinweis: 'Testumgebungen auf @northlight.at, nie auf das Kundenpostfach',
+  },
   ...['ALERT_RESEND_API_KEY', 'ALERT_RESEND_FROM', 'ALERT_RESEND_TO'].map((key) => ({
     key,
     quelle: 'fest',
     wenn: () => hat('resend') || hat('nodemailer'),
-    hinweis: 'Agentur-Account fuer den Laufzeit-Alarm, nie der Kunden-Key',
+    // Optional, solange der Laufzeit-Alarm aus email-test nicht gebaut ist —
+    // sonst steht check:env dauerhaft auf Exit 1 und wird ignoriert.
+    optional: true,
+    hinweis: 'Agentur-Account fuer den Laufzeit-Alarm (email-test), nie der Kunden-Key',
   })),
 
   // --- Formulare ---
