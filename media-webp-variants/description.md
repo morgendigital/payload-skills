@@ -390,6 +390,14 @@ FEHLT  r-motiv.webp  [6ab3a57223d114b2e3a7e21b]
 289 Dateien geprueft, 8 Dokumente mit fehlenden Dateien.
 ```
 
+→ **Er wiederholt jede Abfrage, bevor er etwas als fehlend meldet.** Ein frisch
+geschriebenes Objekt ist nicht sofort sichtbar: im Normalbetrieb gemessen
+**25–90 ms**, unter Last deutlich mehr — nach einem Import waren Dateien 400 ms
+danach noch nicht auffindbar und Sekunden später da. Ohne Wiederholung meldet der
+Detektor deshalb nach jedem größeren Import Dateien als fehlend, die einfach nur
+unterwegs sind. Ein Werkzeug, das regelmäßig grundlos anschlägt, wird ignoriert —
+und fängt dann den echten Fall auch nicht mehr.
+
 → Er prüft **nur, was im Dokument als `sizes` steht**. Das ist wichtig gegen
 Fehlalarme: Payload schreibt Varianten, die größer wären als die Quelle, gar
 nicht erst. Ein 600×200-Bild bekommt vier Dateien statt acht — und das ist

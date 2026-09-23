@@ -55,13 +55,29 @@ const s3 = new S3Client({
   },
 })
 
+/**
+ * Ein frisch geschriebenes Objekt ist nicht sofort sichtbar. Im Normalbetrieb
+ * gemessen: 25–90 ms. Unter Last deutlich mehr — nach einem Import waren
+ * Dateien 400 ms danach noch nicht auffindbar und Sekunden spaeter da.
+ *
+ * Ohne Wiederholung meldet dieses Skript deshalb nach jedem groesseren Import
+ * Dateien als fehlend, die einfach nur unterwegs sind. Ein Detektor, der
+ * regelmaessig falsch Alarm schlaegt, wird ignoriert — und dann faengt er den
+ * echten Fall auch nicht mehr.
+ */
+const WARTEN_MS = [0, 500, 1500, 3000]
+
 const vorhanden = async (key) => {
-  try {
-    await s3.send(new HeadObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }))
-    return true
-  } catch {
-    return false
+  for (const warten of WARTEN_MS) {
+    if (warten) await new Promise((r) => setTimeout(r, warten))
+    try {
+      await s3.send(new HeadObjectCommand({ Bucket: process.env.S3_BUCKET, Key: key }))
+      return true
+    } catch {
+      // weiter zum naechsten Versuch
+    }
   }
+  return false
 }
 
 const payload = await getPayload({ config })
@@ -100,6 +116,11 @@ for (const doc of docs) {
 }
 
 console.log(`\n${dateien} Dateien geprueft, ${kaputt} Dokumente mit fehlenden Dateien.`)
+if (kaputt) {
+  console.log(
+    `(Jede Datei wurde ueber ${WARTEN_MS.length} Versuche bis ${WARTEN_MS.reduce((a, b) => a + b, 0) / 1000}s gesucht.)`,
+  )
+}
 
 if (kaputt) {
   console.error(
