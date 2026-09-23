@@ -314,3 +314,98 @@ print(`${bad.length} von ${all.length} Medien mit Nicht-WebP-Varianten`)
 
 Oder ohne DB-Zugang: eine Bild-URL auf der Live-Seite aufrufen und auf die Endung im `srcset`
 schauen. Steht dort `-1920x1080.png`, während die Hauptdatei `.webp` heißt, ist es dieser Fall.
+
+---
+
+# Der andere Fehlerfall: Dokument ohne Datei
+
+Oben geht es um Varianten im **falschen Format**. Dieser Abschnitt behandelt den
+Fall darunter: Varianten, die es **gar nicht gibt** — und eine Hauptdatei, die
+ebenfalls fehlt, während das Media-Dokument in der Datenbank tadellos aussieht.
+
+## Das Symptom
+
+`payload.create` mit `file` gibt ein gültiges Dokument zurück. Es hat
+`filename`, `mimeType`, `width`, `height`, `filesize` und einen vollständigen
+`sizes`-Block. Im Admin ist es von einem intakten Dokument **nicht zu
+unterscheiden** — Vorschaubild inklusive, denn das kommt aus denselben Feldern.
+
+Nur: Im Bucket liegt nichts. `/api/media/file/<name>` liefert 404. Auf der Seite
+ein kaputtes Bild.
+
+Kein Fehler, keine Ausnahme, kein Log-Eintrag.
+
+## Was an frechinger gemessen wurde (23.09.2026)
+
+Payload 3.90.1, Next 16.3, `@payloadcms/storage-s3`, MinIO-kompatibler Endpoint.
+
+| Beobachtung | |
+| --- | --- |
+| Betroffene Dokumente | 8 |
+| Betroffen war | **nie die erste Datei eines Skripts**, immer die folgenden |
+| Zeitliche Lage | zwei Fenster von zusammen **unter einer Minute** |
+| Außerhalb dieser Fenster | rund 70 Uploads fehlerfrei |
+| 40 direkte `PutObject` + sofortiges `HeadObject` | 40 von 40 vorhanden |
+| S3-Mitschnitt in einem **gesunden** Lauf | alle PUTs antworten `200` |
+
+Der Zeitpunkt lässt sich ohne Zusatzfelder rekonstruieren: Bei MongoDB tragen die
+ersten vier Bytes der `ObjectId` den Unix-Timestamp.
+
+```js
+new Date(parseInt(String(doc.id).slice(0, 8), 16) * 1000)
+```
+
+Genau das hat die Häufung sichtbar gemacht — acht Fehler in 36 Sekunden, davor
+und danach nichts.
+
+**Was nicht feststeht:** Ob die PUTs in den Fehlerfenstern überhaupt abgesetzt
+wurden. Der Mitschnitt lief nur während eines gesunden Laufs; in der Wiederholung
+war der Fehler nicht mehr auslösbar. **Ursache offen.**
+
+Widerlegt wurden: Upload-Reihenfolge, Bildgröße, `process.exit(0)` am
+Skriptende, nachfolgende Schreibvorgänge im selben Skript, und der Bucket selbst.
+
+## Der Detektor
+
+[`check-media.mjs`](./check-media.mjs) nach `scripts/check-media.mjs` kopieren:
+
+```jsonc
+"check:media": "payload run scripts/check-media.mjs"
+```
+
+```bash
+infisical run --env=prod -- pnpm check:media
+infisical run --env=prod -- pnpm check:media --alle
+```
+
+Er geht jedes Media-Dokument durch und fragt den Bucket per `HeadObject` nach der
+Hauptdatei **und jeder Variante**. Exit 1, sobald etwas fehlt.
+
+```
+51 Media-Dokumente werden gegen Bucket "frechinger" geprueft.
+FEHLT  r-motiv.webp  [6ab3a57223d114b2e3a7e21b]
+         - Hauptdatei (r-motiv.webp)
+         - thumbnail (r-motiv-300x193.webp)
+         - square (r-motiv-500x500.webp)
+289 Dateien geprueft, 8 Dokumente mit fehlenden Dateien.
+```
+
+→ Er prüft **nur, was im Dokument als `sizes` steht**. Das ist wichtig gegen
+Fehlalarme: Payload schreibt Varianten, die größer wären als die Quelle, gar
+nicht erst. Ein 600×200-Bild bekommt vier Dateien statt acht — und das ist
+korrekt, kein Verlust.
+
+→ `@aws-sdk/client-s3` ist eine transitive Abhängigkeit von
+`@payloadcms/storage-s3` und vom Projektwurzelverzeichnis aus **nicht**
+auflösbar. Das Skript sucht sie deshalb im pnpm-Store; deswegen läuft es über
+`payload run` und nicht über `node`.
+
+## Wohin damit
+
+- **In [go-live-check](../go-live-check/description.md)**, zusammen mit dem
+  Lighthouse- und dem Security-Durchgang. Ein kaputtes Bild fällt sonst erst dem
+  Kunden auf.
+- **Nach jedem größeren Import.** Genau dort ist der Fehler aufgetreten: beim
+  Anlegen mehrerer Medien in einem Skript.
+- **Nach dem Reparaturlauf aus dem ersten Teil dieser Datei** — er schreibt jedes
+  Dokument mit angehängtem File neu, also entstehen dabei Hunderte S3-Writes.
