@@ -92,10 +92,25 @@ alle Deployments stabil bleiben, sonst „Failed to find Server Action"
 
 `S3_BUCKET`, `S3_ENDPOINT`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`
 
-→ **Bucket je Environment trennen.** Ein gemeinsamer Bucket ist bequemer, aber
-das Setup fährt `overwriteExistingFiles` — ein Dev-Upload mit gleichem Dateinamen
-überschreibt dann eine Produktionsdatei, und die alte URL gibt 404
+→ **Bucket je Environment trennen — aber nur, wenn auch die Datenbank getrennt
+ist.** Bei getrennter DB ist ein gemeinsamer Bucket riskant: Das Setup fährt
+`overwriteExistingFiles`, ein Dev-Upload mit gleichem Dateinamen überschreibt
+eine Produktionsdatei, und die alte URL gibt 404
 ([media-webp-variants](../media-webp-variants/description.md)).
+
+→ **Teilt sich ein Environment die Datenbank mit Produktion, muss es sich auch
+den Bucket teilen.** Das ist der Fall, sobald `dev` über die Tailscale-Adresse
+auf dieselbe DB zeigt, die in `prod` als `DATABASE_URL_BUILD` steht — ein
+üblicher Aufbau, damit lokal mit echten Inhalten gearbeitet wird. Getrennte
+Buckets bei gemeinsamer DB sind dann der schlechteste Fall von beiden: In `dev`
+entstehende Media-Dokumente landen in der **Produktionsdatenbank** und zeigen auf
+Dateien in einem Bucket, den die Live-Seite nicht sieht — die Seite liefert 404
+für Bilder, die im Admin einwandfrei aussehen. Umgekehrt fehlen lokal alle
+bestehenden Bilder.
+
+→ Und: Wer so arbeitet, arbeitet an echten Inhalten. Skripte, Löschungen und
+Migrationen entsprechend behandeln
+([database-migrations](../database-migrations/description.md)).
 
 ### imgproxy — sobald Uploads auf S3 liegen
 
@@ -150,6 +165,15 @@ if (!['http:', 'https:'].includes(parsed.protocol) || env.NEXT_PUBLIC_SERVER_URL
   console.error('[build] NEXT_PUBLIC_SERVER_URL braucht http(s) und keinen Slash am Ende.')
   process.exit(1)
 }
+```
+
+→ **Der Wrapper braucht `node_modules/.bin` im PATH.** `next` findet sonst nur
+pnpm. Wird der Wrapper direkt aufgerufen — `infisical run -- node
+scripts/build.mjs`, oder ein Start-Command in Dokploy, der nicht über pnpm geht —
+stirbt der Build mit `next: command not found` und exit 127:
+
+```js
+env.PATH = [join(process.cwd(), 'node_modules', '.bin'), env.PATH].filter(Boolean).join(delimiter)
 ```
 
 → **Der Wrapper muss `env.*` lesen, nicht `process.env.*`.** Der dotenv-Aufsatz

@@ -45,12 +45,19 @@ Laufzeit), löst das ein Wrapper:
 ```js
 // scripts/build.mjs
 import { spawnSync } from 'node:child_process'
+import { delimiter, join } from 'node:path'
 
 const nodeOptions = [process.env.NODE_OPTIONS, '--no-deprecation'].filter(Boolean).join(' ')
 const env = { ...process.env, NODE_OPTIONS: nodeOptions }
 
-if (process.env.DATABASE_URI_BUILD) {
-  env.DATABASE_URI = process.env.DATABASE_URI_BUILD
+// `next` liegt in node_modules/.bin. Diesen PATH setzt nur pnpm — wird der
+// Wrapper direkt aufgerufen (`infisical run -- node scripts/build.mjs`, oder ein
+// Start-Command in Dokploy, der nicht ueber pnpm geht), stirbt der Build mit
+// "next: command not found" und exit 127.
+env.PATH = [join(process.cwd(), 'node_modules', '.bin'), env.PATH].filter(Boolean).join(delimiter)
+
+if (env.DATABASE_URI_BUILD) {
+  env.DATABASE_URI = env.DATABASE_URI_BUILD
   console.log('[build] using DATABASE_URI_BUILD for this build')
 }
 
@@ -59,6 +66,11 @@ process.exit(result.status ?? 1)
 ```
 
 In Dokploy dann `DATABASE_URI` = Laufzeit-Adresse, `DATABASE_URI_BUILD` = Build-Adresse.
+
+→ **`env.*` lesen, nicht `process.env.*`.** Sobald der Wrapper `.env`-Dateien selbst
+einliest (nötig, weil seine Prüfungen vor `next build` laufen), steht der Wert nur in
+der Kopie. Wer am Original vorbeiliest, ignoriert stillschweigend jede Build-Adresse,
+die aus einer `.env` kommt.
 
 ### Was eingebacken wird und was nicht
 
