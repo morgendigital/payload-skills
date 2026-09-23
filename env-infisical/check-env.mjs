@@ -194,6 +194,16 @@ for (const env of ENVS) {
   const platzhalter = erwartet.filter((k) => vorhanden.has(k) && PLATZHALTER.test(vorhanden.get(k)))
   const verwaist = [...vorhanden.keys()].filter((k) => !erwartet.includes(k))
 
+  // Mongo-Adresse ohne Datenbanknamen landet still in der Default-DB `test`.
+  const ohneDbName = ['DATABASE_URL', 'DATABASE_URL_BUILD']
+    .filter((k) => vorhanden.has(k))
+    .filter((k) => {
+      const v = vorhanden.get(k)
+      if (!/^mongodb(\+srv)?:\/\//.test(v)) return false
+      const m = v.match(/^mongodb(?:\+srv)?:\/\/[^/?]+(\/[^?]*)?/)
+      return !m?.[1] || m[1] === '/'
+    })
+
   console.log(`### ${env}  (${vorhanden.size} gesetzt)`)
   if (fehlt.length) {
     fehler++
@@ -208,13 +218,18 @@ for (const env of ENVS) {
     fehler++
     console.log(`  PLATZHALTER (${platzhalter.length}): ${platzhalter.join(', ')}`)
   }
+  if (ohneDbName.length) {
+    fehler++
+    console.log(`  OHNE DATENBANKNAMEN (${ohneDbName.length}): ${ohneDbName.join(', ')}`)
+    console.log(`    → landet in Mongos Default-DB "test", nicht in einer eigenen`)
+  }
   if (fehltOptional.length && !quiet) {
     console.log(`  optional, nicht gesetzt: ${fehltOptional.join(', ')}`)
   }
   if (verwaist.length && !quiet) {
     console.log(`  verwaist (nirgends gelesen): ${verwaist.join(', ')}`)
   }
-  if (!fehlt.length && !platzhalter.length) console.log('  ok')
+  if (!fehlt.length && !platzhalter.length && !ohneDbName.length) console.log('  ok')
   console.log()
 }
 

@@ -50,6 +50,7 @@ Es meldet je Environment:
 | --- | --- |
 | **FEHLT** | Code oder Katalog erwartet sie, in Infisical nicht vorhanden |
 | **PLATZHALTER** | gesetzt, aber `test`, leer, `changeme`, `YOUR_SECRET_HERE`, … |
+| **OHNE DATENBANKNAMEN** | eine Mongo-Adresse endet am Host — Payload landet dann in der Default-DB `test` |
 | optional, nicht gesetzt | z. B. `DATABASE_URL_BUILD` — nur wo gebraucht |
 | verwaist | in Infisical, wird nirgends gelesen |
 | WARNUNG | ein Secret ist in zwei Environments identisch, oder Bucket und Datenbank passen nicht zusammen |
@@ -98,6 +99,26 @@ ist reine Verzögerung.
 → `NEXT_SERVER_ACTIONS_ENCRYPTION_KEY` muss **innerhalb** eines Environments über
 alle Deployments stabil bleiben, sonst „Failed to find Server Action"
 ([server-actions-encryption](../server-actions-encryption/description.md)).
+
+→ **Die Mongo-Adresse muss auf einen Datenbanknamen enden.** Endet sie am Host
+(`mongodb://user:pw@host:27017`), verbindet sich Payload wortlos mit Mongos
+Default-Datenbank **`test`**. Es funktioniert alles, nichts warnt — bis jemand auf
+dem Host ein zweites Projekt anlegt, das seine Adresse genauso schreibt. Dann
+teilen sich zwei Kundenprojekte eine Datenbank.
+
+Der Fehler ist doppelt unauffällig, weil `test` auch der Name des üblichen
+Platzhalterwerts ist: In Infisical steht dann `DATABASE_URL` korrekt befüllt da,
+und trotzdem heißt die Datenbank `test`.
+
+```
+mongodb://user:pw@host:27017                  → landet in `test`
+mongodb://user:pw@host:27017/frechinger       → richtig
+mongodb://user:pw@host:27017/frechinger?tls=true
+```
+
+→ Beim Nachtragen prüfen, ob in `test` schon Daten liegen. Ist die alte
+Datenbank nicht leer, ist das Umhängen eine Migration, kein Edit
+([database-migrations](../database-migrations/description.md)).
 
 ### Nur wo Build- und Laufzeit-Adresse auseinanderfallen
 
