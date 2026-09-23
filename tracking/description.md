@@ -2,6 +2,87 @@
 
 Diese Datei beschreibt, wie in diesem Projekt `GTM`, allgemeines Tracking und der Cookie-Banner aktuell umgesetzt sind.
 
+## Zuerst: die Komponentennamen haben sich geändert (c15t v2)
+
+Diese Datei beschreibt einen Stand mit `CookieBanner` und
+`ConsentManagerDialog`. Ab **`@c15t/nextjs` 2.x** heißen sie anders. Gemessen an
+frechinger (23.09.2026, `@c15t/nextjs` 2.2.1):
+
+| Bis v1 | Ab v2 |
+| --- | --- |
+| `CookieBanner` | **`ConsentBanner`** |
+| `ConsentManagerDialog` | **`ConsentDialog`** |
+| eigener Button + `setIsPrivacyDialogOpen` + DOM-Selektor-Rückfall | **`ConsentDialogLink`** aus `@c15t/nextjs/components/consent-dialog-link` |
+| `options.i18n.translations` | **`options.i18n.messages`** (plus `locale`, `detectBrowserLanguage`) |
+
+→ Den Footer-Button nicht mehr selbst bauen. `ConsentDialogLink` ist unstyled
+und nimmt `asChild`, passt sich also in vorhandenes Markup ein:
+
+```tsx
+<ConsentDialogLink asChild>
+  <button type="button" className="uppercase">Cookies</button>
+</ConsentDialogLink>
+```
+
+→ **Die Doku liegt im Paket.** `node_modules/@c15t/nextjs/docs/README.md` ist
+der Index, darunter `frameworks/next/…` und `integrations/…`. Vor jedem Umbau
+dort nachlesen statt aus dem Gedächtnis — die Namen haben sich schon einmal
+geändert.
+
+## Falle: Deutsch ist nicht dabei
+
+`@c15t/translations` exportiert nur `.`, `./all` und `./en` — **ein einzelnes
+Deutsch gibt es nicht**. Ohne eigene Strings passiert Folgendes: Titel und
+Beschreibung stehen deutsch da (weil man sie überschrieben hat), die Buttons
+aber auf Englisch — „Accept All", „Reject All", „Customize". Das fällt in keinem
+Typecheck auf, nur im Screenshot.
+
+`./all` wäre der naheliegende Ausweg und bündelt 30+ Sprachen in eine
+einsprachige Seite. Für ein deutsches Projekt ist es weniger, die eigenen
+Strings mitzugeben:
+
+```ts
+i18n: {
+  locale: 'de',
+  detectBrowserLanguage: false,
+  messages: {
+    de: {
+      common: { acceptAll: 'Alle akzeptieren', rejectAll: 'Alle ablehnen',
+                customize: 'Einstellungen', save: 'Auswahl speichern',
+                close: 'Schließen', securedBy: 'Abgesichert durch' },
+      cookieBanner: { title: …, description: … },
+      consentManagerDialog: { title: …, description: … },
+      consentTypes: { necessary: {…}, measurement: {…}, marketing: {…} },
+      legalLinks: { privacyPolicy: …, cookiePolicy: …, termsOfService: … },
+    },
+  },
+}
+```
+
+Die vollständige Schlüsselliste steht in der `en.cjs` des Pakets unter
+`dist/translations` — kommt später ein Schlüssel dazu, erscheint er als
+englischer Text.
+
+## `hideBranding` nicht vergessen
+
+Ohne das Prop klebt ein „Secured by c15t" auf der Seite des Kunden. Gehört an
+**beide** Komponenten:
+
+```tsx
+<ConsentBanner hideBranding />
+<ConsentDialog hideBranding />
+```
+
+## Kategorien: nur was wirklich vorkommt
+
+Diese Datei listet fünf Kategorien. Das stammt aus einem Projekt mit
+entsprechend vielen Diensten. c15t zeigt nur an, was in `consentCategories`
+steht — eine Kategorie, die nichts steuert, ist für den Besucher Rauschen und
+für den Betreiber eine Behauptung, die er nicht einlösen kann.
+
+Für eine Seite mit GTM und Pixel reichen `['necessary', 'measurement',
+'marketing']`. `necessary` ist ohnehin immer dabei.
+
 ## Überblick
 
 Die Consent- und Tracking-Logik ist zentral in `src/providers/index.tsx` und `src/lib/tracking/push.ts` aufgebaut:

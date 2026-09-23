@@ -102,12 +102,29 @@ const KATALOG = [
   },
 
   // --- Tracking ---
-  ...['NEXT_PUBLIC_GTM_ID', 'NEXT_PUBLIC_C15T_URL'].map((key) => ({
+  // Alle optional: Ohne ID registriert c15t schlicht kein Skript, und die Seite
+  // funktioniert. Pflicht waeren sie erst, wenn der Kunde sie geliefert hat —
+  // bis dahin stuende check:env sonst dauerhaft auf Exit 1.
+  ...[
+    'NEXT_PUBLIC_GTM_ID',
+    'NEXT_PUBLIC_GA4_MEASUREMENT_ID',
+    'NEXT_PUBLIC_GOOGLE_TAG_ID',
+    'NEXT_PUBLIC_GOOGLE_ADS_ID',
+    'NEXT_PUBLIC_META_PIXEL_ID',
+  ].map((key) => ({
     key,
     quelle: 'extern',
+    optional: true,
     wenn: () => hat('@c15t/nextjs') || hat('c15t'),
-    hinweis: 'serverseitig lesen und als Prop durchreichen, nicht window.*',
+    hinweis: 'serverseitig lesen und als Prop durchreichen, nie im Client aus process.env',
   })),
+  {
+    // Nur im hosted-Modus. Offline braucht keinen Backend-Endpunkt.
+    key: 'NEXT_PUBLIC_C15T_URL',
+    quelle: 'extern',
+    optional: true,
+    wenn: () => hat('@c15t/nextjs') || hat('c15t'),
+  },
 
   // --- Keycloak ---
   ...['KEYCLOAK_ISSUER', 'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_CLIENT_SECRET', 'BETTER_AUTH_SECRET'].map(
@@ -146,7 +163,9 @@ function ausCode() {
     const t = readFileSync(p, 'utf8')
     for (const m of t.matchAll(/process\.env(?:\.([A-Z0-9_]+)|\[['"]([A-Z0-9_]+)['"]\])/g)) {
       const k = m[1] || m[2]
-      if (k.length > 1) treffer.add(k)
+      // Namen, die auf `_` enden, stammen aus Fliesstext wie
+      // `process.env.NEXT_PUBLIC_*` in einem Kommentar — keine echte Variable.
+      if (k.length > 1 && !k.endsWith('_')) treffer.add(k)
     }
   }
   const lauf = (dir) => {
