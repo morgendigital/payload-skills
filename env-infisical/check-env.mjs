@@ -47,7 +47,8 @@ const KATALOG = [
       key,
       quelle: key.includes('KEY') ? 'extern' : 'fest',
       wenn: () => hat('@payloadcms/storage-s3'),
-      proEnv: key === 'S3_BUCKET',
+      // Nicht "immer verschieden": der Bucket ist an die Datenbank gekoppelt.
+      anDb: key === 'S3_BUCKET',
     }),
   ),
 
@@ -56,7 +57,7 @@ const KATALOG = [
     key,
     quelle: 'fest',
     wenn: () => hat('@payloadcms/storage-s3'),
-    proEnv: key.endsWith('BUCKET'),
+    anDb: key.endsWith('BUCKET'),
     hinweis: 'in Dokploy als BUILD-Env, sonst bleibt der Loader stumm deaktiviert',
   })),
 
@@ -111,7 +112,10 @@ const PLATZHALTER = /^(test|todo|changeme|xxx|placeholder|your_?secret_?here|)$/
 const args = process.argv.slice(2)
 const nurEnv = args.find((a) => a.startsWith('--env='))?.split('=')[1]
 const quiet = args.includes('--quiet')
-const ENVS = nurEnv ? [nurEnv] : ['dev', 'staging', 'prod']
+// Environments dieses Projekts. Nicht jedes Projekt hat ein staging — die
+// CLI kann keine Environments auflisten, deshalb steht die Liste hier.
+const ALLE_ENVS = (process.env.INFISICAL_ENVS || 'dev,prod').split(',').map((e) => e.trim())
+const ENVS = nurEnv ? [nurEnv] : ALLE_ENVS
 
 /** Alle Env-Zugriffe aus dem Projektcode. */
 function ausCode() {
@@ -214,18 +218,70 @@ for (const env of ENVS) {
   console.log()
 }
 
-// Secrets, die ueber alle Environments identisch sind — fast immer ein Versehen.
 if (proEnvWerte.size > 1) {
-  const identisch = KATALOG.filter((e) => e.proEnv)
-    .map((e) => e.key)
-    .filter((k) => {
-      const werte = [...proEnvWerte.values()].map((m) => m.get(k)).filter(Boolean)
-      return werte.length === proEnvWerte.size && new Set(werte).size === 1
-    })
-  if (identisch.length) {
+  const paare = []
+  const namen = [...proEnvWerte.keys()]
+  for (let i = 0; i < namen.length; i++)
+    for (let j = i + 1; j < namen.length; j++) paare.push([namen[i], namen[j]])
+
+  const warnungen = []
+
+  // 1. Secrets muessen sich je Environment unterscheiden — ausnahmslos.
+  for (const k of KATALOG.filter((e) => e.proEnv).map((e) => e.key)) {
+    for (const [a, b] of paare) {
+      const va = proEnvWerte.get(a).get(k)
+      const vb = proEnvWerte.get(b).get(k)
+      if (va && vb && va === vb) {
+        warnungen.push(`${k}: in ${a} und ${b} identisch — Secrets gehoeren je Environment erzeugt`)
+      }
+    }
+  }
+
+  // Zwei Environments zeigen auf dieselbe Datenbank, sobald sich ihre Adress-Mengen
+  // ueberschneiden — DATABASE_URL und DATABASE_URL_BUILD sind zwei Wege zum selben
+  // Ziel. Ein reiner String-Vergleich von DATABASE_URL sieht das nicht: intern
+  // Docker-Host, von aussen Tailscale.
+  const adressen = (env) =>
+    new Set(
+      ['DATABASE_URL', 'DATABASE_URL_BUILD']
+        .map((k) => proEnvWerte.get(env).get(k))
+        .filter(Boolean),
+    )
+  const gleicheDb = (a, b) => {
+    const A = adressen(a)
+    return [...adressen(b)].some((x) => A.has(x))
+  }
+
+  // 2. Der Bucket ist an die Datenbank gekoppelt, nicht an das Environment.
+  //    Gleiche DB  -> gleicher Bucket ist PFLICHT (sonst zeigen Media-Dokumente
+  //                   auf Dateien, die das andere Environment nicht sieht).
+  //    Andere DB   -> getrennter Bucket, sonst ueberschreiben sich Uploads.
+  for (const k of KATALOG.filter((e) => e.anDb).map((e) => e.key)) {
+    for (const [a, b] of paare) {
+      const dbGleich = gleicheDb(a, b)
+      const va = proEnvWerte.get(a).get(k)
+      const vb = proEnvWerte.get(b).get(k)
+      if (!va || !vb) continue
+      if (dbGleich && va !== vb) {
+        warnungen.push(
+          `${k}: ${a} und ${b} teilen sich die Datenbank, aber nicht den Bucket — ` +
+            `Media-Dokumente zeigen dann auf Dateien, die das jeweils andere nicht sieht`,
+        )
+      }
+      if (!dbGleich && va === vb) {
+        warnungen.push(
+          `${k}: ${a} und ${b} haben getrennte Datenbanken, aber denselben Bucket — ` +
+            `ein Upload kann die Datei des anderen ueberschreiben`,
+        )
+      }
+    }
+  }
+
+  if (warnungen.length) {
     fehler++
-    console.log(`WARNUNG: ueber alle Environments identisch, sollte je Environment verschieden sein:`)
-    console.log(`  ${identisch.join(', ')}\n`)
+    console.log('WARNUNG:')
+    for (const w of warnungen) console.log(`  - ${w}`)
+    console.log()
   }
 }
 

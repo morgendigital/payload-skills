@@ -1,7 +1,8 @@
 # Umgebungsvariablen vollständig in Infisical — ohne Nachfassen
 
-Quelle der Wahrheit für Werte ist **Infisical** (EU-Region, ein Projekt je Repo,
-Environments `dev` / `staging` / `prod`). Die `.env.example` im Repo dokumentiert
+Quelle der Wahrheit für Werte ist **Infisical** (EU-Region, ein Projekt je Repo).
+Environments nach Bedarf — mindestens `dev` und `prod`; ein `staging` nur, wenn es
+wirklich benutzt wird, sonst pflegt man einen dritten Satz Variablen für nichts. Die `.env.example` im Repo dokumentiert
 nur, *welche* Variablen es gibt und wofür — nie Werte.
 
 ## Das Problem
@@ -39,6 +40,10 @@ pnpm check:env                 # alle Environments
 pnpm check:env -- --env=prod   # eines
 ```
 
+Die Environment-Liste steht oben im Skript (`ALLE_ENVS`, Default `dev,prod`) und
+lässt sich per `INFISICAL_ENVS` überschreiben — die CLI kann Environments nicht
+auflisten, deshalb explizit.
+
 Es meldet je Environment:
 
 | Befund | Bedeutung |
@@ -47,7 +52,7 @@ Es meldet je Environment:
 | **PLATZHALTER** | gesetzt, aber `test`, leer, `changeme`, `YOUR_SECRET_HERE`, … |
 | optional, nicht gesetzt | z. B. `DATABASE_URL_BUILD` — nur wo gebraucht |
 | verwaist | in Infisical, wird nirgends gelesen |
-| WARNUNG identisch | ein `proEnv`-Secret ist über alle Environments gleich |
+| WARNUNG | ein Secret ist in zwei Environments identisch, oder Bucket und Datenbank passen nicht zusammen |
 
 Exit 1 bei FEHLT oder PLATZHALTER. Damit taugt es als **Gate vor dem Go-live**
 und gehört in [go-live-check](../go-live-check/description.md).
@@ -55,9 +60,21 @@ und gehört in [go-live-check](../go-live-check/description.md).
 > **Werte werden gelesen, aber nie ausgegeben.** Berichtet wird ausschließlich
 > der Name der Variablen — das Skript darf deshalb in CI-Logs laufen.
 
-Der letzte Befund ist der unterschätzte: Wer die Environments per Copy-Paste
-anlegt, hat in Produktion dasselbe `PAYLOAD_SECRET` wie in Dev. Ein
-kompromittiertes Dev-Environment ist dann ein kompromittiertes Produktivsystem.
+Die WARNUNG-Zeile prüft zwei Kopplungen, die man von Hand übersieht:
+
+1. **Secrets müssen sich je Environment unterscheiden.** Wer die Environments per
+   Copy-Paste anlegt, hat in Produktion dasselbe `PAYLOAD_SECRET` wie in Dev —
+   ein kompromittiertes Dev-Environment ist dann ein kompromittiertes
+   Produktivsystem.
+2. **Der Bucket gehört zur Datenbank, nicht zum Environment.** Gleiche DB →
+   gleicher Bucket ist Pflicht; getrennte DB → getrennter Bucket. Beide
+   Abweichungen werden gemeldet.
+
+→ Für Punkt 2 reicht ein String-Vergleich von `DATABASE_URL` **nicht**. Zwei
+Environments können über verschiedene Wege auf dieselbe Datenbank zeigen — intern
+über den Docker-Host, von außen über Tailscale. Das Skript vergleicht deshalb die
+Mengen aus `DATABASE_URL` **und** `DATABASE_URL_BUILD` und wertet eine
+Überschneidung als „dieselbe Datenbank".
 
 ## Der Katalog
 
