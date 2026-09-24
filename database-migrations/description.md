@@ -156,6 +156,30 @@ will.
   Hunderttausenden Zeilen sperrt. Versionen vorher aufräumen (`maxPerDoc`) — das ist ohnehin
   überfällig, wenn Autosave aktiv ist.
 
+## MongoDB (Befunde aus frechinger, September 2026)
+
+Der Skill ist auf Postgres geschrieben. Mit `@payloadcms/db-mongodb`:
+
+- **Kein `push`, keine Schema-Migrationen.** Neue Felder, Collections und Blocks
+  gehen ohne. Eine Migration braucht es nur fuer **Datenumbauten** (Feld
+  umbenennen, `blockType` aendern, `text` → `richText`).
+- **`src/migrations/index.ts` anlegen** (`export const migrations: Migration[] = []`),
+  sonst meldet `migrate:status` „No migration directory found".
+- **Statische Seiten: lieber `prodMigrations` als `payload migrate && next start`.**
+  Ist die DB beim Containerstart kurz nicht erreichbar, faehrt der Container mit
+  dem Migrationsschritt davor gar nicht hoch — ohne ihn liefert er die
+  prerenderten Seiten weiter aus. `migrate` fragt uebrigens nicht interaktiv nach
+  (nur `migrate:fresh`), haengt also nicht im Container.
+- **Bucket-Versionierung pruefen:**
+
+  ```bash
+  # GetBucketVersioning / GetBucketLifecycleConfiguration mit @aws-sdk/client-s3
+  # (transitiv ueber @payloadcms/storage-s3 vorhanden)
+  ```
+
+  In frechinger: nie aktiviert, keine Lifecycle-Regel. Versionierung laesst sich
+  auf S3 nur pausieren, nicht entfernen — bewusst entscheiden, nicht nebenbei.
+
 ## Quick-Checkliste
 
 1. `push` nur in `development`, in Produktion `false`; `migrationDir` gesetzt

@@ -102,6 +102,27 @@ done
 freigeben (Skip-Rule auf die User-Agents). Wer Pay-per-Crawl nutzt: das ist eine bewusste
 Monetarisierungs-Entscheidung des Kunden, kein Default.
 
+### Befunde aus frechinger (September 2026)
+
+- **Die Dev-Domain war indexierbar.** `dev` zeigt dieselben Inhalte wie die
+  Live-Seite und traegt Canonicals auf sich selbst — eine vollstaendige Kopie der
+  Kundenseite fuer Google. Loesung ohne eigene Variable: aus
+  `NEXT_PUBLIC_SERVER_URL` ableiten (`*.northlight.website` und localhost →
+  nicht indexierbar), dann `robots.txt` mit `Disallow: /` **und**
+  `X-Robots-Tag: noindex, nofollow` als Header. robots.txt allein verhindert nur
+  das Crawlen; eine verlinkte URL landet trotzdem im Index.
+- **robots.txt als Route** (`app/(frontend)/robots.txt/route.ts`, `force-static`)
+  statt `app/robots.ts` — `MetadataRoute.Robots` kann `Content-Signal` nicht
+  erzeugen. `generateRobotsTxt: false` in `next-sitemap` und eine alte
+  `public/robots.txt` loeschen: Dateien in `public/` gewinnen gegen Routen.
+- **Platzhalter-Social-URLs nicht in `sameAs`.** `https://www.instagram.com/` ohne
+  Profilpfad setzt die Firma mit Instagram selbst gleich. Nur URLs mit Pfad.
+- **Oeffnungszeiten aus Freitext** (Footer-Anzeige) konservativ parsen: Was der
+  Parser nicht sicher versteht („nach Vereinbarung", „Sonn- und Feiertage"), fehlt
+  im Markup. Falsche Zeiten bei Google sind schlimmer als keine.
+- **Schaufenster ohne Online-Verkauf:** `Offer.availability =
+  https://schema.org/InStoreOnly`, `price` nur aus einem Zahlenfeld.
+
 ## 2. Content Signals Policy — die Entscheidung, die der Kunde treffen muss
 
 Cloudflare hat am 24.09.2025 eine robots.txt-Erweiterung veröffentlicht, die **Zugriff** und

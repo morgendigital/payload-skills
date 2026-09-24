@@ -79,6 +79,35 @@ CSP schützt vor XSS. Für Next.js + Payload (mit Rich Text Editor) muss sie sor
 
 ---
 
+### Befunde aus frechinger (Payload 3.90, Next 16.3, September 2026)
+
+- **`frame-ancestors 'none'` legt die Live Preview lahm** — das Admin bettet die
+  eigene Seite per iframe ein. `'self'` (und `X-Frame-Options: SAMEORIGIN`).
+- **Nonce statt `'unsafe-inline'` kostet das statische Rendering.** Eine Nonce muss
+  pro Request neu sein, jede Seite wird dynamisch
+  ([static-rendering](../static-rendering/description.md)). Fuer SSG-Seiten bleibt
+  `'unsafe-inline'`.
+- **Das Admin braucht in Produktion kein `'unsafe-eval'`** — mit Payload 3.90 im
+  Produktionsbuild gegengeprueft, keine CSP-Verletzung. Nur der Dev-Server
+  (React Refresh) braucht es: `'unsafe-eval'` an `NODE_ENV === 'development'` knuepfen.
+- **`upgrade-insecure-requests` und HSTS nicht im Dev-Server.** Zeigt
+  `NEXT_PUBLIC_SERVER_URL` lokal auf die https-Dev-Domain, der Server laeuft aber auf
+  `http://localhost`, bricht das Upgrade sonst jede Ressource.
+- **HSTS ohne `includeSubDomains`/`preload`**, solange nicht klar ist, dass jede
+  Subdomain der Kundendomain HTTPS kann. `preload` ist praktisch nicht ruecknehmbar,
+  und unter `*.northlight.website` liegen alle Projekte.
+- **ALTCHA rechnet im Web Worker aus einem `blob:`** → `worker-src 'self' blob:`.
+  Das Widget war in frechinger unsichtbar (`auto="onsubmit"`); zum Testen
+  `document.querySelector('altcha-widget').verify()` im Browser aufrufen.
+- **`csrf` ist in Payload per Default leer — und leer heisst: jede Origin.**
+  `extractJWT` akzeptiert das Cookie dann von ueberall; nur `SameSite=Lax` steht
+  noch dazwischen. `csrf` = `cors` setzen, lokal zusaetzlich `http://localhost:${PORT}`.
+- **GraphQL abschalten, wenn es niemand nutzt:** `graphQL: { disable: true }` **und**
+  die Routen `(payload)/api/graphql` und `graphql-playground` loeschen — der
+  Playground antwortete sonst weiter mit 200.
+- `pnpm audit` fand nur `dompurify` in `monaco-editor` (Admin-Codefeld) →
+  `pnpm.overrides`.
+
 ## 3. CORS
 
 ### Next.js API Routes

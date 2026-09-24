@@ -51,7 +51,9 @@ Kombinator, die man im Markup verwendet (`.container`, `.full-bleed`).
 **Gegenprüfen — in der Quelle reicht nicht:**
 
 ```bash
-grep -o 'body:has([^{]*){[^}]*}' .next/static/chunks/*.css
+grep -oE 'body:has\([^{]*\{[^}]*\}' .next/static/chunks/*.css
+# Nicht die BRE-Form 'body:has([^{]*){…}' — die verlangt ein `)` direkt vor `{`
+# und findet `body:has(…) .site-header{…}` deshalb nie, auch wenn die Regel da ist.
 ```
 
 Kommt nichts zurück, ist der Selektor unterwegs verloren gegangen.

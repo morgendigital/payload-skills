@@ -210,6 +210,31 @@ const defaults = await getCachedGlobal('seo-defaults', 1)()
 
 → `mergeOpenGraph` bekommt die Defaults dann als zweites Argument statt aus der Modul-Konstante. **`getCachedGlobal` benutzen, nicht `payload.findGlobal` direkt** — sonst ein DB-Query pro Seitenaufruf.
 
+## Befunde aus frechinger (Payload 3.90, September 2026)
+
+- **„Generieren"-Knoepfe liefern 403, wenn die Felder von Hand eingebunden sind.**
+  Wer den SEO-Tab selbst baut (`MetaTitleField({ hasGenerateFn: true })` in einem
+  eigenen Tab) und `seoPlugin({})` ohne `collections` registriert: Die Endpunkte
+  `/api/plugin-seo/generate-*` pruefen `pluginConfig.collections` und antworten
+  fuer alles andere mit Forbidden. Die Knoepfe waren auf jeder Seite tot.
+  Entweder `collections` im Plugin (dann haengt es die Felder selbst ein —
+  `tabbedUI` nur, wenn das **erste** Feld der Collection ein Tabs-Feld ist) oder
+  `hasGenerateFn: false`.
+- **`generateTitle` aus dem Template setzt den Suffix doppelt.** Es liefert
+  „Titel | Marke", `generateMeta` haengt „ | Marke" noch einmal an.
+- **`OverviewField` widerspricht einem eigenen Live-Check.** Es kennt die
+  Rueckfaelle nicht („0/3 checks are passing" bei jeder Seite ohne eigenen
+  SEO-Titel). Raus, wenn der Live-Check aus 5.5 da ist. Rueckfaelle im Live-Check
+  als neutrale Hinweise zeigen („Kein SEO-Titel — der Seitentitel wird verwendet"),
+  weil die Feld-Balken des Plugins weiter „Missing" sagen.
+- **Grenzen an die Plugin-Balken angleichen** (Description 100–150), sonst stehen
+  zwei verschiedene Zahlen auf demselben Bildschirm.
+- **`DefaultTemplate` liegt in 3.90 unter `@payloadcms/next/templates`**, nicht
+  unter `@payloadcms/ui/rsc`. `Button` mit `el="link"` nimmt `url` (oder `to`).
+- **OG-Bilder als JPEG.** Auch die `og`-Groesse der Media-Collection — wer per
+  [media-webp-variants](../media-webp-variants/description.md) jede Groesse auf
+  WebP stellt, erwischt sie mit.
+
 ## 5. Dashboard: Meta-Check über alle Seiten
 
 Eine eigene Admin-View unter `/admin/seo-check` plus ein Kachel-Widget auf dem Dashboard. Keine zusätzliche Dependency.

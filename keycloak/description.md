@@ -860,6 +860,48 @@ Die Codebeispiele weiter oben (`genericOAuthClient()`, `signIn.oauth2({providerI
 
 ---
 
+## Befunde aus frechinger (better-auth 1.7.5, Keycloak 26.7.4, September 2026)
+
+Gegen einen lokalen Keycloak in Docker durchgespielt (Realm, confidential Client,
+Realm-Rolle, ein Benutzer mit und einer ohne Rolle): Login, Auto-Provisioning,
+Abweisung, Logout inkl. Keycloak-Sitzung, Kontowechsel.
+
+- **Rollen stehen per Default nur im Access-Token.** Keycloaks Standard-Scope
+  `roles` hat bei den Mappern „realm roles" und „client roles"
+  `access.token.claim=true`, aber **kein** `id.token.claim`. Wer — wie in dawi —
+  `realm_access`/`resource_access` nur aus dem ID-Token liest, lehnt ohne extra
+  Mapper-Einstellung **jeden** Login ab, sichtbar nur als Info-Zeile im Log. Das
+  Access-Token ist bei Keycloak ein JWT und steckt im Account-Hook mit drin:
+  `databaseHooks.account.{create,update}.after` bekommt `accessToken` und `idToken` —
+  Rollen aus beiden zusammenfuehren.
+- **`accountIssuer` gibt es in 1.7.5 nicht mehr** (TypeScript-Fehler).
+- **Das Keycloak-Logout baut Better Auth jetzt selbst.** Im Provider
+  `endSessionEndpoint` und `postLogoutRedirectURI` setzen; `authClient.signOut()`
+  antwortet mit `{ url }` (inkl. `id_token_hint` und `client_id`). Die handgebaute
+  `getKeycloakLogoutUrl` und `NEXT_PUBLIC_KEYCLOAK_*` fuers Logout entfallen.
+  Mit `fetchOptions: { redirect: 'manual' }` aufrufen und `result.data.url` ansteuern.
+- **Discovery plus feste Endpunkte.** `discoveryUrl` liefert Issuer und JWKS (ID-Token
+  wird dann signaturgeprueft). Schlaegt sie fehl, loggt 1.7.5 nur — die festen
+  `authorizationUrl`/`tokenUrl`/`userInfoUrl` bleiben stehen, weil Discovery nur
+  fehlende Werte fuellt (`??=`).
+- **Admin-Komponenten nie abhaengig von der Env registrieren.** `logout.Button`
+  oder ein `ui`-Feld nur bei gesetztem Keycloak einzutragen heisst: Die lokal
+  erzeugte Importmap enthaelt sie nicht (`generate:importmap` → „No new imports
+  found"), und in Produktion steht an ihrer Stelle lautlos nichts. Immer
+  registrieren, die Komponente entscheidet per `clientProps`.
+- **`clientProps` statt `NEXT_PUBLIC_*`.** Provider-ID (fuer `signIn.social`) und
+  Account-Konsolen-URL lassen sich aus der Payload-Config als `clientProps` an die
+  Admin-Komponenten geben — zur Laufzeit gelesen, nicht ins Bundle gebacken.
+- **Passwort-Login als Uebergang.** Solange Issuer/Client-ID/Secret Platzhalter
+  sind, `disableLocalStrategy` weglassen — sonst ist das Admin ab dem ersten Deploy
+  gesperrt, bevor jemand den Keycloak-Client angelegt hat.
+- **Abgewiesene ohne Rolle landen im Kreis.** Keycloak-Login ok, Payload sagt nein,
+  zurueck auf `/admin/login`, erneut klicken, wieder dort. Auf der Login-Seite
+  `authClient.getSession()` pruefen: Eine Better-Auth-Session dort heisst
+  „angemeldet, aber abgewiesen" → Hinweis plus „Mit anderem Konto anmelden"
+  (signOut inkl. Keycloak-Logout).
+- `trustedOrigins` mit `http://localhost:${PORT}` statt fest `:3000`.
+
 ## Sicherheit (Kurz)
 
 - Wer den CMS-Client in Keycloak nutzen darf = wer ins Admin kann (bei Variante B zusätzlich Payload-`access`/Rollen beachten). Ergänzend: **Client-Rollen** (drei Stufen) für **`users`** wie oben.

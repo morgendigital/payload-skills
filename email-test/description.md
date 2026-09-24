@@ -277,6 +277,23 @@ weiter auslösen. Direkt danach ein zweites Mal absenden → **keine** zweite Ma
 
 ---
 
+## Befunde aus frechinger (September 2026)
+
+- **`payload run` verwirft Argumente, die nicht hinter `--` stehen.**
+  `pnpm test:email --alarm` kam im Skript nicht an. Das `--` gehoert ins Script
+  selbst: `"test:email": "payload run scripts/test-email.ts --"`.
+- **Variablennamen:** Der Katalog in [env-infisical](../env-infisical/) fuehrte
+  `ALERT_RESEND_FROM` und `ALERT_RESEND_TO`, der Code hier liest
+  `ALERT_RESEND_FROM_EMAIL`, der Empfaenger steht fest im Code. Katalog angeglichen.
+- **Ohne React Email im Projekt** ist der Alarm ein HTML-/Text-String — kein
+  zweiter Mailstack nur dafuer.
+- **Drossel mit gestubbtem `fetch` testen**, solange der Agentur-Key fehlt:
+  gleiche Ursache mit anderer Server-ID → `throttled`, andere Ursache → `sent`,
+  Resend lehnt ab → `failed` und der naechste Versuch darf wieder.
+- **Ein fehlgeschlagener Alarm zaehlt nicht als gesendet** — den Zeitstempel
+  wieder loeschen, sonst schweigt die Drossel 6 Stunden, ohne dass je eine Mail
+  rausging.
+
 ## Checkliste
 
 - [ ] `test:smtp`-Script vorhanden, Verify und Versand getrennt aufrufbar.

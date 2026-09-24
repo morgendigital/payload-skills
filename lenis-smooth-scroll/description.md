@@ -216,6 +216,30 @@ if (reduce) lenis.destroy()
 
 Details und der Rest der Regel in [`accessibility/`](../accessibility/description.md).
 
+## Befunde aus frechinger (lenis 1.3.26, September 2026)
+
+- **Abschnitt 8 ist ueberholt.** Lenis hat seit 1.3 `respectReducedMotion` (Default
+  `true`): kein Nachlauf, programmatische Spruenge sofort. Ein eigener
+  `matchMedia`-Abbau ist nicht mehr noetig.
+- **Der `isFirstRender`-Guard aus Abschnitt 1 schuetzt nur den allerersten Aufruf.**
+  Bei Zurueck/Vor aendert sich `pathname` ebenfalls, und der Reset auf 0 laeuft
+  gegen die Position, die der Browser wiederherstellen will. Ein `popstate`-Listener,
+  der den naechsten Reset ueberspringt, loest das. (In Next 16 stellt der
+  App-Router die Position beim Zurueck in unserem Test auch ohne Lenis nicht
+  wieder her — der Guard sorgt nur dafuer, dass Lenis nicht zusaetzlich dagegen arbeitet.)
+- **Instanz im Effect statt `<ReactLenis>`.** Wer `<ReactLenis>` erst nach dem
+  Hydrieren einblendet (z. B. abhaengig von einer Media-Query), aendert den
+  Komponentenbaum — React mountet die ganze Seite neu. Im Root-Modus muss Lenis
+  nichts umschliessen: `new Lenis({...})` im `useEffect`, Singleton setzen, im
+  Cleanup `destroy()`.
+- **c15t sperrt beim Dialog nur `body`** (`overflow: hidden`), Lenis scrollt aber
+  `html` — der Hintergrund liefe unter dem Consent-Dialog weiter. Ueber
+  `useConsentManager().activeUI === 'dialog'` stoppen, mit den Overlay-Markern aus
+  Abschnitt 4. Dazu `prevent: (node) => node.closest('[role="dialog"]') !== null`
+  in den Optionen, sonst laesst sich der Dialog auf kleinen Bildschirmen nicht scrollen.
+- `lenis/dist/lenis.css` setzt `.lenis.lenis-smooth iframe { pointer-events: none }` —
+  nur waehrend gescrollt wird. Eingebettete Karten bleiben bedienbar.
+
 ## Quick-Checkliste
 
 1. Provider setzt bei `pathname`-Wechsel `scrollTo(0, { immediate: true })` — mit First-Render- **und** Hash-Guard

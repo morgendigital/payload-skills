@@ -70,7 +70,8 @@ const KATALOG = [
   // SMTP_PASSWORD, nicht SMTP_PASS — so heisst es im Adapter aus
   // form-submissions-email. Ein falscher Name im Katalog meldet die Variable als
   // "aus dem Code" fehlend und die richtige als verwaist.
-  ...['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD'].map((key) => ({
+  // SMTP_SECURE nur fuer exotische Ports — bei 465/587/25 entscheidet der Port.
+  ...['SMTP_HOST', 'SMTP_PORT', 'SMTP_USER', 'SMTP_PASSWORD', 'SMTP_SECURE'].map((key) => ({
     key,
     quelle: 'extern',
     wenn: () => hat('nodemailer') || hat('@payloadcms/email-nodemailer'),
@@ -83,13 +84,12 @@ const KATALOG = [
     proEnv: true,
     hinweis: 'Testumgebungen auf @northlight.at, nie auf das Kundenpostfach',
   },
-  ...['ALERT_RESEND_API_KEY', 'ALERT_RESEND_FROM', 'ALERT_RESEND_TO'].map((key) => ({
+  // Namen wie in email-test (reportEmailFailure liest genau diese). Der
+  // Empfaenger ist fest office@northlight.at und steht im Code, nicht in der Env.
+  ...['ALERT_RESEND_API_KEY', 'ALERT_RESEND_FROM_EMAIL'].map((key) => ({
     key,
     quelle: 'fest',
-    wenn: () => hat('resend') || hat('nodemailer'),
-    // Optional, solange der Laufzeit-Alarm aus email-test nicht gebaut ist —
-    // sonst steht check:env dauerhaft auf Exit 1 und wird ignoriert.
-    optional: true,
+    wenn: () => hat('@payloadcms/email-resend') || hat('@payloadcms/email-nodemailer'),
     hinweis: 'Agentur-Account fuer den Laufzeit-Alarm (email-test), nie der Kunden-Key',
   })),
 
@@ -127,9 +127,31 @@ const KATALOG = [
   },
 
   // --- Keycloak ---
-  ...['KEYCLOAK_ISSUER', 'KEYCLOAK_CLIENT_ID', 'KEYCLOAK_CLIENT_SECRET', 'BETTER_AUTH_SECRET'].map(
-    (key) => ({ key, quelle: 'extern', wenn: () => hat('better-auth') }),
-  ),
+  // Namen wie in payload-skills/keycloak (KEYCLOAK_CMS_*). Solange Issuer,
+  // Client-ID und Secret Platzhalter sind, bleibt der Passwort-Login aktiv —
+  // PLATZHALTER hier heisst also „Keycloak noch nicht eingerichtet".
+  ...['KEYCLOAK_ISSUER', 'KEYCLOAK_CMS_CLIENT_ID', 'KEYCLOAK_CMS_CLIENT_SECRET'].map((key) => ({
+    key,
+    quelle: 'extern',
+    wenn: () => hat('better-auth'),
+    hinweis: 'aus dem Keycloak-Client; Issuer = https://<host>/realms/<realm>',
+  })),
+  {
+    key: 'KEYCLOAK_CMS_REQUIRED_ROLE',
+    quelle: 'fest',
+    wenn: () => hat('better-auth'),
+    hinweis: 'Rolle, die neben `admin` ins CMS darf (realm- oder clientweit)',
+  },
+  // Selbst erzeugt wie PAYLOAD_SECRET — pro Environment verschieden, sonst
+  // gilt eine Dev-Session auch in Produktion.
+  { key: 'BETTER_AUTH_SECRET', quelle: 'selbst', proEnv: true, wenn: () => hat('better-auth') },
+  {
+    key: 'DISABLE_KEYCLOAK_USER_PROVISIONING',
+    quelle: 'fest',
+    optional: true,
+    wenn: () => hat('better-auth'),
+    hinweis: '`true` = kein automatisches Anlegen von Payload-Usern',
+  },
 ].filter((e) => (typeof e.wenn === 'function' ? e.wenn() : e.wenn))
 
 // Von Laufzeit/Framework gesetzt — nie in Infisical erwartet.

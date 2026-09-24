@@ -287,6 +287,26 @@ Als normale Payload-Page anlegen, im Footer verlinken, Inhalt:
 
 → Kein Copy-Paste-Text: Die Erklärung ist eine **Selbstauskunft**. Steht dort „vollständig barrierefrei", während der Cookie-Banner nicht tastaturbedienbar ist, ist das schlechter als eine ehrliche Teil-Konformität.
 
+## Befunde aus frechinger (September 2026)
+
+- **`jsxA11y.flatConfigs.strict` wirft „Cannot redefine plugin"**, weil
+  `eslint-config-next` 16 das Plugin schon registriert. Nur die Regeln uebernehmen,
+  und nur fuer die Dateien, fuer die Next es registriert:
+  `{ files: ['**/*.{js,jsx,mjs,ts,tsx,mts,cts}'], rules: jsxA11y.flatConfigs.strict.rules }`.
+  Ohne `files` meldet ESLint „could not find plugin".
+- **Der Fokusring von c15t ist `--c15t-primary`.** Ist das die Markenfarbe des
+  Button-Rands, sieht der fokussierte Button aus wie der nicht fokussierte.
+  `--button-focus-ring`, `--switch-focus-ring`, `--preference-item-focus-ring`,
+  `--tabs-focus-ring` in `:root` ueberschreiben (ausserhalb jeder `@layer`).
+- **axe misst waehrend der Einblend-Animation Mischfarben.** Direkt nach
+  `toBeVisible()` meldete es im Consent-Dialog Kontraste, die es nie gibt. Die
+  Animation abwarten, bevor `analyze()` laeuft.
+- **Bekannte Designausnahmen nicht ueber die ganze Regel abschalten.** Nur das
+  konkrete Farbpaar aus `node.any[0].data` (`fgColor`/`bgColor`) filtern — sonst
+  faellt jeder neue Kontrastfehler mit durch.
+- **Widerrufs-Link nicht an andere Inhalte haengen.** Der Cookie-Link stand in
+  `rechtslinks.length > 0 && …` und waere ohne gepflegte Rechtslinks verschwunden.
+
 ## Quick-Checkliste für ein neues Projekt
 
 1. Geltungsbereich klären (Dienstleistung für Verbraucher? Kleinstunternehmen-Schwellen?) und im Angebot festhalten
