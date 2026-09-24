@@ -431,6 +431,26 @@ Cache-Helfer sind damit komplett wirkungslos — ohne dass irgendetwas rot wäre
 dem Fix steht dort wieder `'header' | 'footer'`. Ein Typecheck, der nicht läuft, meldet
 eben auch keine Typfehler.
 
+### 0.5 Videos sind 404 — still
+
+`components/Media/VideoMedia/index.tsx` baut die Quelle selbst:
+
+```tsx
+<source src={getMediaUrl(`/media/${filename}`)} />
+```
+
+Die Route `/media/…` gibt es nicht; Payload liefert Uploads unter `/api/media/file/…`
+aus (mit S3-Adapter genauso). Die Media-Collection des Templates hat keine
+`mimeTypes`-Einschränkung, ein Video laesst sich also hochladen, steht im Admin korrekt
+da — und das `<video>` auf der Seite bleibt leer. Kein Fehler im Build, keiner im Log.
+
+```tsx
+const { mimeType, updatedAt, url } = resource
+<source src={getMediaUrl(url, updatedAt)} type={mimeType ?? undefined} />
+```
+
+Gefunden in frechinger beim Umstellen der Bilder auf imgproxy, nicht durch ein Video.
+
 ### Gegenprüfen
 
 ```bash

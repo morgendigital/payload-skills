@@ -45,6 +45,13 @@ alle Projekte bedienen, die aus demselben S3 lesen.
 > nur `NEXT_PUBLIC_IMGPROXY_URL=https://imgproxy.northlight.website` +
 > `NEXT_PUBLIC_IMGPROXY_BUCKET=s3://<bucket>` setzen. Eine **eigene** Instanz nur
 > aufsetzen, wenn ein Projekt aus einem **anderen** S3/Bucket-Endpoint liest.
+>
+> **Stand 24.09.2026: Todo 2.1 ist an der gemeinsamen Instanz nicht umgesetzt.**
+> In frechinger gemessen, dieselbe URL nacheinander abgerufen: `Accept: image/avif` →
+> `cf-cache-status: MISS`, danach `Accept: image/webp` und `*/*` → `HIT` mit
+> `image/avif`. Wer eine URL als Erster abruft, bestimmt das Format für alle. Browser
+> ohne AVIF (Safari vor 16) sehen dann ein kaputtes Bild. Nachprüfen mit dem Befehl in
+> Todo 5 („Vary-Test"), bevor man sich darauf verlässt.
 
 **Wichtig:**
 - **S3 nativ** einbinden (`IMGPROXY_USE_S3`), nicht per HTTP — Payload-Media sind i. d. R.
@@ -281,6 +288,33 @@ Eine Loader-**Funktion** kann **nicht** über die Server→Client-Grenze überge
   export const imgproxyEnabled = enabled
   ```
 
+- **Gleicher Dateiname = gleiche URL = altes Bild.** Payload hängt `-1` nur an, wenn ein
+  *anderes* Dokument den Namen schon trägt (`getSafeFileName` → `docWithFilenameExists`).
+  Bild löschen und unter demselben Namen neu hochladen ergibt denselben S3-Key — und
+  Cloudflare plus nginx liefern 30 Tage lang das alte Derivat. Der Paket-Loader bekommt
+  nur den Key und kann das nicht unterscheiden. imgproxy hat dafür `cb:` (Cache-Buster,
+  ändert die URL, nicht die Verarbeitung). Pro Bild einen Loader mit `updatedAt` bauen:
+
+  ```ts
+  export const imgproxyLoaderFor = (updatedAt?: string | null): ImageLoader | undefined => {
+    if (!imgproxy) return undefined
+    const zeit = updatedAt ? Date.parse(updatedAt) : NaN
+    const version = Number.isNaN(zeit) ? '' : zeit.toString(36)
+    return ({ src, width, quality }) => {
+      const url = imgproxy.url(src, { width, quality: quality ?? undefined })
+      return version ? url.replace('/insecure/', `/insecure/cb:${version}/`) : url
+    }
+  }
+  // ImageMedia (Client Component): loader={imgproxyLoaderFor(resource.updatedAt)} src={resource.filename}
+  ```
+
+  Ein Closure pro Bild ist in einer Client Component unproblematisch. Base36 statt ISO,
+  weil Doppelpunkte in einem Pfadsegment nur Ärger machen.
+- **`quality={100}` aus dem Template entfernen**, wenn der Loader greift. `next/image`
+  reicht `quality` ungefiltert an einen eigenen Loader weiter — mit der Template-Einstellung
+  landet `q:100` in jeder imgproxy-URL, ein Vielfaches an Bytes für keinen sichtbaren
+  Unterschied. Ohne Angabe gilt imgproxys Default (80).
+
 ---
 
 ## Todo 5: Verifizieren
@@ -304,6 +338,16 @@ curl -s -o /dev/null -H "Accept: image/avif,*/*" \
   "https://imgproxy.<domain>/insecure/rs:fit:800/q:80/plain/s3://<bucket>/<key>?cb=$RANDOM"
 # erwartet: 200 image/avif <deutlich kleiner als Original>
 ```
+**Vary-Test** (Cloudflare, Todo 2.1) — **dieselbe** URL ohne Cache-Buster, erst mit, dann
+ohne AVIF:
+```bash
+U="https://imgproxy.<domain>/insecure/rs:fit:641/q:80/plain/s3://<bucket>/<key>"
+curl -s -o /dev/null -H "Accept: image/avif,image/webp,*/*" -w "%{content_type}\n" "$U"
+curl -s -o /dev/null -H "Accept: */*" -D - "$U" | grep -iE "content-type|cf-cache-status"
+# kaputt: zweiter Abruf HIT + image/avif — richtig: image/jpeg (oder MISS)
+```
+Eine ungewöhnliche Breite (`641`) nehmen, damit die URL noch nicht im Cache liegt.
+
 Erwartung: alle Raster über imgproxy, `image/avif`/`image/webp` je Browser, `optimizer_raster_leaks = 0`,
 keine `/_next/image`-Raster und keine absoluten `/api/media/file`-URLs mehr.
 
