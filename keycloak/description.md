@@ -901,6 +901,13 @@ Abweisung, Logout inkl. Keycloak-Sitzung, Kontowechsel.
   „angemeldet, aber abgewiesen" → Hinweis plus „Mit anderem Konto anmelden"
   (signOut inkl. Keycloak-Logout).
 - `trustedOrigins` mit `http://localhost:${PORT}` statt fest `:3000`.
+- **`betterAuth()` nie auf Modulebene aufrufen.** Es startet die Initialisierung sofort
+  als Promise ohne `catch`. Fehlt `BETTER_AUTH_SECRET` in Produktion (typisch: in Infisical
+  angelegt, in Dokploy noch nicht), ist das eine unbehandelte Rejection — Node beendet den
+  Prozess schon beim **Import**, also waehrend `next build` die Route einsammelt. Gemessen:
+  Exit 1 beim blossen `import`. Loesung: `getAuth = () => (globalThis._auth ??= betterAuth({...}))`,
+  die Route antwortet ohne eingerichteten Keycloak mit 404, die Strategy steigt vorher aus.
+  Betrifft dawi genauso (`export const auth = betterAuth(...)` auf Modulebene).
 
 ## Sicherheit (Kurz)
 

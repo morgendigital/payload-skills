@@ -451,6 +451,22 @@ const { mimeType, updatedAt, url } = resource
 
 Gefunden in frechinger beim Umstellen der Bilder auf imgproxy, nicht durch ein Video.
 
+### 0.6 Node 24 aus dem Template bricht den Dokploy-Build
+
+Das Template setzt `"engines": { "node": ">=24.15.0" }`. Dokploy baut mit **Nixpacks 1.35**,
+und das stellt kein Node 24 bereit — es findet keine passende Version und nimmt **ohne
+Warnung** den Default Node 18. Im Log steht es nur im Setup-Kasten (`nodejs_18`), der Build
+scheitert danach an `You are using Node.js 18.20.5. For Next.js, Node.js version ">=20.9.0"
+is required.` Eine `.nvmrc` mit `24` aendert daran nichts.
+
+Weder Payload 3.90 (`^18.20.2 || >=20.9.0`) noch Next 16 (`>=20.9.0`) brauchen 24:
+
+```json
+"engines": { "node": ">=22.0.0" }
+```
+
+plus `.nvmrc` auf `22`. Gefunden in frechinger beim ersten Deploy.
+
 ### Gegenprüfen
 
 ```bash
