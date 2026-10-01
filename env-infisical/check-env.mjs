@@ -27,9 +27,22 @@ const deps = { ...(pkg.dependencies || {}), ...(pkg.devDependencies || {}) }
 const hat = (name) => Boolean(deps[name])
 const datei = (p) => existsSync(p)
 
+// Payload-Templates nennen die Mongo-Adresse unterschiedlich: aeltere
+// `DATABASE_URI`, neuere `DATABASE_URL`. Massgeblich ist, was die Config liest —
+// die Build-Variante heisst immer genauso, mit `_BUILD` dahinter. Wer hier den
+// falschen Namen erwartet, bekommt die echte Variable als "verwaist" gemeldet und
+// legt eine `_BUILD`-Variable an, die kein Wrapper liest.
+const DB = (() => {
+  for (const p of ['src/payload.config.ts', 'payload.config.ts']) {
+    if (datei(p) && /process\.env\.DATABASE_URI\b/.test(readFileSync(p, 'utf8'))) return 'DATABASE_URI'
+  }
+  return 'DATABASE_URL'
+})()
+const DB_BUILD = `${DB}_BUILD`
+
 const KATALOG = [
   // --- immer ---
-  { key: 'DATABASE_URL', quelle: 'extern', wenn: true },
+  { key: DB, quelle: 'extern', wenn: true },
   { key: 'PAYLOAD_SECRET', quelle: 'selbst', wenn: true, proEnv: true },
   { key: 'NEXT_PUBLIC_SERVER_URL', quelle: 'extern', wenn: true, proEnv: true },
   { key: 'CRON_SECRET', quelle: 'selbst', wenn: true, proEnv: true },
@@ -39,7 +52,7 @@ const KATALOG = [
 
   // Nur wo Build- und Laufzeit-Adresse auseinanderfallen. Ein Platzhalter darin
   // macht den Build aktiv kaputt, weil der Wrapper ihn dann benutzt.
-  { key: 'DATABASE_URL_BUILD', quelle: 'extern', wenn: true, optional: true },
+  { key: DB_BUILD, quelle: 'extern', wenn: true, optional: true },
 
   // --- S3 ---
   ...['S3_BUCKET', 'S3_ENDPOINT', 'S3_REGION', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY'].map(
@@ -194,7 +207,9 @@ function ausCode() {
     for (const e of readdirSync(dir, { withFileTypes: true })) {
       const p = join(dir, e.name)
       if (e.isDirectory()) {
-        if (e.name !== 'node_modules' && !e.name.startsWith('.')) lauf(p)
+        // src/scripts: Einmal-Skripte (`payload run`) mit eigenen Schaltern wie
+        // DRY_RUN oder SINCE — keine Variablen des Deployments.
+        if (e.name !== 'node_modules' && !e.name.startsWith('.') && p !== join('src', 'scripts')) lauf(p)
       } else if (['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs'].includes(extname(e.name))) {
         lies(p)
       }
@@ -249,7 +264,7 @@ for (const env of ENVS) {
   const verwaist = [...vorhanden.keys()].filter((k) => !erwartet.includes(k))
 
   // Mongo-Adresse ohne Datenbanknamen landet still in der Default-DB `test`.
-  const ohneDbName = ['DATABASE_URL', 'DATABASE_URL_BUILD']
+  const ohneDbName = [DB, DB_BUILD]
     .filter((k) => vorhanden.has(k))
     .filter((k) => {
       const v = vorhanden.get(k)
@@ -307,12 +322,12 @@ if (proEnvWerte.size > 1) {
   }
 
   // Zwei Environments zeigen auf dieselbe Datenbank, sobald sich ihre Adress-Mengen
-  // ueberschneiden — DATABASE_URL und DATABASE_URL_BUILD sind zwei Wege zum selben
-  // Ziel. Ein reiner String-Vergleich von DATABASE_URL sieht das nicht: intern
+  // ueberschneiden — Laufzeit- und Build-Adresse sind zwei Wege zum selben
+  // Ziel. Ein reiner String-Vergleich der Laufzeit-Adresse sieht das nicht: intern
   // Docker-Host, von aussen Tailscale.
   const adressen = (env) =>
     new Set(
-      ['DATABASE_URL', 'DATABASE_URL_BUILD']
+      [DB, DB_BUILD]
         .map((k) => proEnvWerte.get(env).get(k))
         .filter(Boolean),
     )

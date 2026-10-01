@@ -370,6 +370,22 @@ nur: **nicht suchen, warum der Build auf Dokploy nichts tut** — er ist nie gel
 `.env`-Dateien deshalb noch nicht geladen sind. Ohne eigenes `dotenv.config()` meldet der
 Wrapper eine fehlende `DATABASE_URL`, die in der `.env` längst steht.
 
+→ `dotenv` ist im Payload-Template keine direkte Abhängigkeit, und pnpm lässt den
+Import aus dem Projekt-Root deshalb nicht zu. Ohne neue Abhängigkeit geht es mit
+Node selbst (ab 20.12):
+
+```js
+import { existsSync, readFileSync } from 'node:fs'
+import { parseEnv } from 'node:util'
+
+for (const file of ['.env.production.local', '.env.local', '.env.production', '.env']) {
+  if (!existsSync(file)) continue
+  for (const [key, value] of Object.entries(parseEnv(readFileSync(file, 'utf8')))) {
+    if (env[key] === undefined) env[key] = value // Dokploy / infisical run gewinnen
+  }
+}
+```
+
 ### 0.3 `pnpm lint` stürzt ab
 
 ```

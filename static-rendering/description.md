@@ -67,6 +67,17 @@ process.exit(result.status ?? 1)
 
 In Dokploy dann `DATABASE_URI` = Laufzeit-Adresse, `DATABASE_URI_BUILD` = Build-Adresse.
 
+→ **Der Name folgt der Config.** Liest `payload.config.ts` `DATABASE_URL` (neuere
+Templates), heißt die Build-Variante `DATABASE_URL_BUILD`. Ein `_BUILD` zum falschen
+Namen wird von niemandem gelesen — der Build nimmt still die Laufzeit-Adresse
+([env-infisical](../env-infisical/description.md)).
+
+→ **Der volle Build prüft die Typen, der zweistufige nicht.** Wer vom
+`experimental-build-mode` umsteigt, bekommt Typfehler zu sehen, die seit Monaten im
+Code liegen. An SAAC: die Preview-Route aus dem Template typisiert `req` als eigenes
+Cookie-Objekt statt `NextRequest` und scheitert am Route-Handler-Typ von Next 15.
+Vor dem ersten Deploy einmal lokal `pnpm build` laufen lassen.
+
 → **`env.*` lesen, nicht `process.env.*`.** Sobald der Wrapper `.env`-Dateien selbst
 einliest (nötig, weil seine Prüfungen vor `next build` laufen), steht der Wert nur in
 der Kopie. Wer am Original vorbeiliest, ignoriert stillschweigend jede Build-Adresse,
@@ -175,6 +186,16 @@ Beim Umbau mit prüfen:
   allein reicht nicht, es braucht zusätzlich `revalidatePath('/[locale]', 'layout')`.
 - **Zu grobe Purges.** `revalidatePath('/', 'layout')` bei jedem Doc-Save wirft die komplette
   statische Auslieferung weg — gezielte Pfade nehmen.
+- **Verschachtelte Seiten.** `revalidatePath('/academy/kapitel')` ohne zweites Argument trifft nur
+  genau diese Seite, nicht `/academy/kapitel/lektion/…` darunter. Wer aus einem Kind-Dokument das
+  Eltern-Segment revalidiert, braucht `'layout'`. An SAAC: bearbeitete Lektionen blieben stehen,
+  weil der Hook nur die Kapitelseite traf.
+- **Collections ohne eigene Seite.** Glossar, Downloads, Quiz und Ähnliches erscheinen nur in
+  Blöcken oder auf einer festen Seite und haben deshalb meist **gar keinen** Hook — mit dem
+  zweistufigen Build fiel das nie auf, mit echtem SSG ändern sie sich erst beim nächsten Deploy.
+  Welche Seiten ein Doc einbetten, ist nicht ermittelbar, also wie bei Media unten der
+  Layout-weite Purge. Bei Collections mit `autosave` nur auf veröffentlichte Änderungen reagieren,
+  sonst purgt jeder Tastendruck die Seite.
 
 ### Die Media-Collection nicht vergessen
 
