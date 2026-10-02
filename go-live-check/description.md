@@ -37,6 +37,9 @@ import configPromise from '@payload-config'
 
 export const dynamic = 'force-dynamic'
 
+// Beim Build eingesetzt (next.config.ts, siehe unten) — welcher Commit hier läuft.
+const commit = process.env.GIT_COMMIT_SHA || null
+
 export async function GET() {
   try {
     const payload = await getPayload({ config: configPromise })
@@ -44,17 +47,70 @@ export async function GET() {
     await payload.find({ collection: 'users', limit: 1, depth: 0, select: {} })
 
     return NextResponse.json(
-      { status: 'ok', timestamp: new Date().toISOString() },
+      { status: 'ok', commit, timestamp: new Date().toISOString() },
       { headers: { 'Cache-Control': 'no-store' } },
     )
   } catch (error) {
     return NextResponse.json(
-      { status: 'error', message: error instanceof Error ? error.message : 'unknown' },
+      { status: 'error', commit, message: error instanceof Error ? error.message : 'unknown' },
       { status: 503, headers: { 'Cache-Control': 'no-store' } },
     )
   }
 }
 ```
+
+### Commit im Health-Endpoint
+
+Der Endpoint meldet zusätzlich, **welcher Commit live läuft**. Ohne das ist „ist der Fix
+deployt?" nur geraten: Dokploy bestätigt beim Deploy bloß, dass es den Auftrag angenommen hat —
+schlägt der Build danach fehl, läuft still die alte Version weiter. Package Checker liest das
+Feld `commit` von der Live-URL, um nach einem Deploy zu bestätigen, dass der neue Commit
+wirklich online ist, und um **genau die deployte Version** auf CVEs zu scannen statt des
+aktuellen `main`. Fehlt das Feld, meldet er: *„The live URL reports no commit, so there is no
+deployed version to scan."*
+
+Der Commit muss **beim Build** in die App, zur Laufzeit gibt es im Container kein Git:
+
+```ts
+// next.config.ts
+import { execSync } from 'node:child_process'
+
+/** Der gebaute Commit — Env-Variable der Plattform, sonst git im Build-Kontext. */
+function buildCommit(): string {
+  const fromEnv = process.env.GIT_COMMIT_SHA || process.env.SOURCE_COMMIT
+  if (fromEnv) return fromEnv
+  try {
+    return execSync('git rev-parse HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
+      .toString()
+      .trim()
+  } catch {
+    return '' // kein .git im Build — Endpoint meldet dann commit: null
+  }
+}
+
+const nextConfig = {
+  env: { GIT_COMMIT_SHA: buildCommit() },
+  // … bestehende Konfiguration
+}
+```
+
+`env` in der `next.config` wird beim Build fest in den Server-Code eingesetzt — der Wert bleibt
+also der des Builds, auch wenn der Container später ohne Git läuft. Bei `withPayload(nextConfig)`
+einfach mit in das bestehende Objekt.
+
+**Nach dem ersten Deploy prüfen:** `curl -s https://<domain>/api/health` muss einen
+40-stelligen Hash in `commit` zeigen, und nach dem nächsten Deploy einen anderen.
+`"commit": null` heißt, der Build hatte kein `.git`: Bei Dockerfile-Builds steht `.git` oft in
+der `.dockerignore` — dann entweder dort entfernen oder den Commit als Build-Argument
+durchreichen (`ARG GIT_COMMIT_SHA` + `ENV GIT_COMMIT_SHA=$GIT_COMMIT_SHA` vor `next build`).
+
+**In Package Checker:** Repo → Settings → **Live URL** = `https://<domain>/api/health` (nicht die
+Startseite — die liefert HTML ohne Commit). Erkannt werden auch `sha`, `commitSha` und
+`gitCommit`.
+
+Der Commit-Hash ist keine schützenswerte Information — das Repo ist privat, der Hash allein
+verrät nichts. Mehr als `status`, `commit` und `timestamp` gehört aber nicht in einen
+öffentlichen Endpoint (keine Versionsnummern von Payload/Next, keine Env-Werte).
 
 **`no-store` nicht vergessen.** Ohne den Header cacht Cloudflare/der Reverse-Proxy die letzte
 Antwort — ein `200 ok` bleibt dann auch dann stehen, wenn die DB längst weg ist, und das
@@ -439,6 +495,8 @@ wirklich nichts durchgerutscht ist:
 
 - [ ] `/api/health` liegt im Root-`app`-Baum, prüft DB-Erreichbarkeit, sendet `no-store`, ist
       in Dokploy als Health Check Path eingetragen — plus externer Uptime-Monitor.
+- [ ] `/api/health` meldet den laufenden Commit (`commit` ist ein Hash, nicht `null`) und ist
+      in Package Checker als Live URL des Repos eingetragen.
 - [ ] SMTP-Kurzcheck aus Todo 2 frisch gegen die Produktions-URL durchgespielt.
 - [ ] Cookie-Banner blockt Tracking bis zur Zustimmung, Footer-Button funktioniert, Kontrast
       geprüft, SalesViewer-Sonderfall entschieden.
