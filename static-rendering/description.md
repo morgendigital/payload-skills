@@ -186,10 +186,16 @@ Beim Umbau mit prüfen:
   allein reicht nicht, es braucht zusätzlich `revalidatePath('/[locale]', 'layout')`.
 - **Zu grobe Purges.** `revalidatePath('/', 'layout')` bei jedem Doc-Save wirft die komplette
   statische Auslieferung weg — gezielte Pfade nehmen.
-- **Verschachtelte Seiten.** `revalidatePath('/academy/kapitel')` ohne zweites Argument trifft nur
-  genau diese Seite, nicht `/academy/kapitel/lektion/…` darunter. Wer aus einem Kind-Dokument das
-  Eltern-Segment revalidiert, braucht `'layout'`. An SAAC: bearbeitete Lektionen blieben stehen,
-  weil der Hook nur die Kapitelseite traf.
+- **Verschachtelte Seiten und Routengruppen.** `revalidatePath('/academy/kapitel')` trifft nur genau
+  diese Seite, nicht `/academy/kapitel/lektion/…` darunter. `'layout'` hilft nur mit dem
+  **Routen-Muster samt Routengruppe**: Next taggt eine prerenderte Seite mit ihrem konkreten Pfad
+  und mit den Layout-Tags ihres Musters, z. B.
+  `_N_T_/(frontend)/academy/[slug]/layout` (nachzulesen in `.next/server/app/**/*.meta`).
+  `revalidatePath('/academy/kapitel', 'layout')` und sogar `revalidatePath('/academy', 'layout')`
+  erzeugen Tags, die keine Seite trägt — der Aufruf ist wirkungslos, ohne Warnung. Richtig:
+  `revalidatePath('/(frontend)/academy/[slug]', 'layout')`. Nur `revalidatePath('/', 'layout')`
+  funktioniert unabhängig von Gruppen, weil `_N_T_/layout` jede Seite trägt. An SAAC: bearbeitete
+  Lektionen blieben stehen, weil der Hook nur die Kapitelseite traf.
 - **Collections ohne eigene Seite.** Glossar, Downloads, Quiz und Ähnliches erscheinen nur in
   Blöcken oder auf einer festen Seite und haben deshalb meist **gar keinen** Hook — mit dem
   zweistufigen Build fiel das nie auf, mit echtem SSG ändern sie sich erst beim nächsten Deploy.

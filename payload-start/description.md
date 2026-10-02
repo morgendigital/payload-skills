@@ -372,11 +372,25 @@ Wrapper eine fehlende `DATABASE_URL`, die in der `.env` längst steht.
 
 → `dotenv` ist im Payload-Template keine direkte Abhängigkeit, und pnpm lässt den
 Import aus dem Projekt-Root deshalb nicht zu. Ohne neue Abhängigkeit geht es mit
-Node selbst (ab 20.12):
+Node selbst — `util.parseEnv` gibt es aber erst ab 20.12. Ältere Projekte mit
+`"node": "^18.20.2 || >=20.9.0"` baut Nixpacks womöglich mit Node 18 (siehe 0.6), und
+ein benannter Import `import { parseEnv } from 'node:util'` bricht dort schon beim
+Laden ab. Also über das Default-Objekt, mit Ersatz:
 
 ```js
 import { existsSync, readFileSync } from 'node:fs'
-import { parseEnv } from 'node:util'
+import util from 'node:util'
+
+const parseEnv =
+  util.parseEnv ??
+  ((text) =>
+    Object.fromEntries(
+      text
+        .split(/\r?\n/)
+        .map((line) => line.match(/^\s*(?:export\s+)?([\w.-]+)\s*=\s*(.*?)\s*$/))
+        .filter(Boolean)
+        .map(([, key, value]) => [key, value.replace(/^(['"])(.*)\1$/, '$2')]),
+    ))
 
 for (const file of ['.env.production.local', '.env.local', '.env.production', '.env']) {
   if (!existsSync(file)) continue
