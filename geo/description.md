@@ -123,6 +123,24 @@ Monetarisierungs-Entscheidung des Kunden, kein Default.
 - **Schaufenster ohne Online-Verkauf:** `Offer.availability =
   https://schema.org/InStoreOnly`, `price` nur aus einem Zahlenfeld.
 
+### Befunde aus karlingerhof (Oktober 2026)
+
+- **`public/robots.txt` verdeckt die neue Route auch lokal.** `next-sitemap` schreibt die Datei
+  im `postbuild`; sie ist nicht eingecheckt, liegt aber nach jedem lokalen Build im Arbeitsverzeichnis.
+  Nach dem Umstieg auf `robots.txt/route.ts` die Datei auch **lokal** löschen, sonst prüft man
+  im Dev die alte Fassung.
+- **Content-Signal aus dem CMS statt hart im Code.** Die Trainings-Entscheidung ist eine
+  Kundenentscheidung (§2) — als Global (`search`/`ai-input`/`ai-train` + optional Disallow für
+  Trainings-Bots) ist sie im Admin dokumentiert und ohne Deploy änderbar. Route mit
+  `unstable_cache` und Tag des Globals, `revalidateTag` im `afterChange`.
+- **`sameAs` aus zwei Quellen zusammenführen:** Footer-Socials **und** Profile, die nur für
+  strukturierte Daten gepflegt werden (Booking, HolidayCheck, Google-Unternehmensprofil) —
+  deduplizieren und die Pfad-Prüfung aus frechinger auf beide anwenden.
+- Umgesetzt im Paket `@morgendigital/payload-geo` (Global „KI & SEO", Helfer `buildRobotsTxt`
+  und `applyBusinessSettings`). Das Paket öffnet außerdem eine per Schlüssel geschützte
+  Schnittstelle für das interne GEO-Tool: Alt-Texte und strukturierte Daten gehen nach Freigabe
+  live, Meta-Texte nur als **Entwurf** (`draft: true`) — veröffentlicht wird im CMS.
+
 ## 2. Content Signals Policy — die Entscheidung, die der Kunde treffen muss
 
 Cloudflare hat am 24.09.2025 eine robots.txt-Erweiterung veröffentlicht, die **Zugriff** und
