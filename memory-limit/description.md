@@ -162,9 +162,31 @@ lässt keine Sockets hängen). Der Anstieg in Produktion passt damit eher zu
 Todo 3 im Prod-Log auseinanderhält. Der lokale Test läuft auf macOS/libmalloc; glibc-
 Fragmentierung (Nixpacks = Ubuntu) bildet er nicht ab.
 
-## Weitere Stellschrauben (nicht gemessen)
+**Testserver nie per `pkill -f next-server` stoppen**, sondern per PID. Laufen auf dem Rechner
+mehrere Sessions mit Next-Servern, trifft das alle — und umgekehrt: Ein Testserver, der unter
+Last mit `ELIFECYCLE … exit code 143` stirbt, ohne Fehler im Log, wurde meist von außen per
+SIGTERM beendet, nicht von der App. Ein `--require`-Hook, der `SIGTERM` mit Zeitstempel
+loggt, und ein `ps -ax | grep next-server` zeigen, wer es war.
 
-Recherchiert, in diesem Repo noch nicht nachgemessen — erst Todo 3 auswerten, dann gezielt:
+## Weitere Stellschrauben
+
+Erst Todo 3 auswerten, dann gezielt. In northlight umgesetzt sind `maxPoolSize`, der
+Proxy-Matcher, Node ≥ 22 und Next 16.3.8. Gegengeprüft wurde nur das Gesamtpaket, nicht
+jede Maßnahme einzeln: Typecheck, Build mit 83 prerenderten Routen, Routing per `curl` und
+30 000 Requests im warmen Zustand bei RSS 317–395 MB / `heapUsed` 123–148 MB. Das ist
+dasselbe Niveau wie vorher, die Maßnahmen haben also nichts verschlechtert. Gezielt
+nachgemessen ist keine davon.
+
+Proxy-Matcher (Next 16: `src/proxy.ts`, Funktion `proxy`), der die Ausnahmen der Funktion
+spiegelt, statt sie nur per Early-Return abzufangen:
+
+```ts
+export const config = {
+  matcher: ['/((?!api|_next|favicon|admin|public-relations|.*\\.).*)'],
+}
+```
+
+Der Rest ist recherchiert, aber nicht gemessen:
 
 - **`MALLOC_ARENA_MAX=2`** als Env: begrenzt glibc-Arenen, die RSS sonst ohne
   Heap-Wachstum aufblähen. Empfehlung aus der sharp-Doku; betrifft glibc
