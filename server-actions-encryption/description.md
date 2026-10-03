@@ -67,7 +67,9 @@ Container. Schmiert die App nach einem Deploy komplett ab, ist der Encryption Ke
 nur der Auslöser, nicht die Ursache — dahinter steckt in der Regel ein **unhandled
 rejection** in einer Server Action oder das **Memory-Limit**. Server Actions konsequent in
 `try/catch` kapseln und beim Setup auf realistische Werte achten (z. B.
-`NODE_OPTIONS=--max-old-space-size=2048`, `experimental.cpus`).
+`NODE_OPTIONS=--max-old-space-size=2048`, `experimental.cpus`). Achtung: Das `start`-Skript
+des Templates überschreibt `NODE_OPTIONS` — ohne den Fix aus
+[memory-limit](../memory-limit/description.md) Todo 1 greift das Heap-Limit nicht.
 
 ## Checkliste
 

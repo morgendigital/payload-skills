@@ -180,6 +180,14 @@ Schlägt der Build fehl, behält Dokploy den laufenden Container — das Risiko 
 
 `NODE_OPTIONS=--no-deprecation` unterdrückt weiterhin nur Lärm von veralteten Node-APIs; der Wrapper reicht ein von außen gesetztes `NODE_OPTIONS` (z. B. ein größeres Heap-Limit) durch, statt es zu überschreiben.
 
+⚠️ **Das `start`-Skript des Templates tut das nicht:** `cross-env NODE_OPTIONS=--no-deprecation next start` ersetzt die Variable, ein in Dokploy gesetztes `--max-old-space-size` kommt nie an (gemessen: Heap-Limit 4192 MB statt 396 MB). Gleich beim Aufsetzen anpassen:
+
+```json
+"start": "cross-env NODE_OPTIONS=\"--no-deprecation $NODE_OPTIONS\" next start"
+```
+
+**Memory-Limit, Heap-Limit und Speicher-Log: [memory-limit](../memory-limit/description.md).**
+
 **Die Details zu Params, Middleware-Rewrites, Revalidierung und der Build/Laufzeit-Trennung stehen in [static-rendering](../static-rendering/description.md).**
 
 ## Todo 4: Stabiler Server-Actions-Encryption-Key (Dokploy)
