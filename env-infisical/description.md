@@ -77,6 +77,21 @@ Environments können über verschiedene Wege auf dieselbe Datenbank zeigen — i
 Mengen aus `DATABASE_URL` **und** `DATABASE_URL_BUILD` und wertet eine
 Überschneidung als „dieselbe Datenbank".
 
+## `DATABASE_URL` oder `DATABASE_URI` — der Name kommt aus der Config
+
+Payload-Templates nennen die Mongo-Adresse unterschiedlich: ältere Projekte lesen
+`DATABASE_URI`, neuere `DATABASE_URL`. Diese Datei schreibt durchgehend
+`DATABASE_URL`; maßgeblich ist aber, was `payload.config.ts` liest. Die
+Build-Variante heißt **immer genauso, mit `_BUILD` dahinter** — zu `DATABASE_URI`
+gehört `DATABASE_URI_BUILD`, nicht `DATABASE_URL_BUILD`.
+
+Gemessen an SAAC (01.10.2026): In Infisical stand `DATABASE_URL_BUILD` (Wert
+`test`) neben `DATABASE_URI`. Der Name kam aus diesem Repo, das Projekt liest
+`DATABASE_URI` — die Variable war wirkungslos, und ein Wrapper nach
+[static-rendering](../static-rendering/description.md) hätte sie nie gelesen.
+`check-env.mjs` erkennt den Namen deshalb selbst aus `payload.config.ts` und meldet
+eine falsch benannte Build-Variable als *verwaist*.
+
 ## Der Katalog
 
 Steht als Datenstruktur oben in `check-env.mjs` und wird dort gepflegt. Inhaltlich:
@@ -124,7 +139,7 @@ Datenbank nicht leer, ist das Umhängen eine Migration, kein Edit
 
 | Variable | Anmerkung |
 | --- | --- |
-| `DATABASE_URL_BUILD` | Dokploy gibt Nixpacks denselben Variablensatz für Build und Laufzeit; erreicht der Builder die DB anders als der Container, führt nur diese Variable daran vorbei ([static-rendering](../static-rendering/description.md)) |
+| `DATABASE_URL_BUILD` bzw. `DATABASE_URI_BUILD` | Dokploy gibt Nixpacks denselben Variablensatz für Build und Laufzeit; erreicht der Builder die DB anders als der Container, führt nur diese Variable daran vorbei ([static-rendering](../static-rendering/description.md)) |
 
 ### S3 — wenn `@payloadcms/storage-s3` installiert ist
 
@@ -186,9 +201,11 @@ Deshalb gehört beides in den Build-Wrapper aus
 // scripts/build.mjs — nach dem dotenv-Aufsatz, vor `next build`
 if (env.DATABASE_URL_BUILD) env.DATABASE_URL = env.DATABASE_URL_BUILD
 
-if (!/^mongodb(\+srv)?:\/\//.test(env.DATABASE_URL)) {
+// Den Wert nicht ausgeben: die Adresse enthält das Passwort und landet sonst
+// im Deploy-Log.
+if (!/^mongodb(\+srv)?:\/\//.test(env.DATABASE_URL ?? '')) {
   const quelle = env.DATABASE_URL_BUILD ? 'DATABASE_URL_BUILD' : 'DATABASE_URL'
-  console.error(`[build] ${quelle} ist keine Mongo-Adresse: "${env.DATABASE_URL}"`)
+  console.error(`[build] ${quelle} ist keine Mongo-Adresse.`)
   process.exit(1)
 }
 

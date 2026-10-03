@@ -180,6 +180,14 @@ Schlägt der Build fehl, behält Dokploy den laufenden Container — das Risiko 
 
 `NODE_OPTIONS=--no-deprecation` unterdrückt weiterhin nur Lärm von veralteten Node-APIs; der Wrapper reicht ein von außen gesetztes `NODE_OPTIONS` (z. B. ein größeres Heap-Limit) durch, statt es zu überschreiben.
 
+⚠️ **Das `start`-Skript des Templates tut das nicht:** `cross-env NODE_OPTIONS=--no-deprecation next start` ersetzt die Variable, ein in Dokploy gesetztes `--max-old-space-size` kommt nie an (gemessen: Heap-Limit 4192 MB statt 396 MB). Gleich beim Aufsetzen anpassen:
+
+```json
+"start": "cross-env NODE_OPTIONS=\"--no-deprecation $NODE_OPTIONS\" next start"
+```
+
+**Memory-Limit, Heap-Limit und Speicher-Log: [memory-limit](../memory-limit/description.md).**
+
 **Die Details zu Params, Middleware-Rewrites, Revalidierung und der Build/Laufzeit-Trennung stehen in [static-rendering](../static-rendering/description.md).**
 
 ## Todo 4: Stabiler Server-Actions-Encryption-Key (Dokploy)
@@ -369,6 +377,36 @@ nur: **nicht suchen, warum der Build auf Dokploy nichts tut** — er ist nie gel
 → Im Wrapper daran denken, dass die Vorabprüfungen **vor** `next build` laufen und die
 `.env`-Dateien deshalb noch nicht geladen sind. Ohne eigenes `dotenv.config()` meldet der
 Wrapper eine fehlende `DATABASE_URL`, die in der `.env` längst steht.
+
+→ `dotenv` ist im Payload-Template keine direkte Abhängigkeit, und pnpm lässt den
+Import aus dem Projekt-Root deshalb nicht zu. Ohne neue Abhängigkeit geht es mit
+Node selbst — `util.parseEnv` gibt es aber erst ab 20.12. Ältere Projekte mit
+`"node": "^18.20.2 || >=20.9.0"` baut Nixpacks womöglich mit Node 18 (siehe 0.6), und
+ein benannter Import `import { parseEnv } from 'node:util'` bricht dort schon beim
+Laden ab. Also über das Default-Objekt, mit Ersatz:
+
+```js
+import { existsSync, readFileSync } from 'node:fs'
+import util from 'node:util'
+
+const parseEnv =
+  util.parseEnv ??
+  ((text) =>
+    Object.fromEntries(
+      text
+        .split(/\r?\n/)
+        .map((line) => line.match(/^\s*(?:export\s+)?([\w.-]+)\s*=\s*(.*?)\s*$/))
+        .filter(Boolean)
+        .map(([, key, value]) => [key, value.replace(/^(['"])(.*)\1$/, '$2')]),
+    ))
+
+for (const file of ['.env.production.local', '.env.local', '.env.production', '.env']) {
+  if (!existsSync(file)) continue
+  for (const [key, value] of Object.entries(parseEnv(readFileSync(file, 'utf8')))) {
+    if (env[key] === undefined) env[key] = value // Dokploy / infisical run gewinnen
+  }
+}
+```
 
 ### 0.3 `pnpm lint` stürzt ab
 
