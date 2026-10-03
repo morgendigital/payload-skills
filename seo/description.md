@@ -234,11 +234,27 @@ Die Zahl gegen die veröffentlichten Dokumente der Collection im Admin halten. W
 mit `[slug]`-Route im Frontend muss eine Zeile in `robots.txt` stehen — das ist der schnellste
 Vollständigkeitstest.
 
+### Befunde aus karlingerhof (Oktober 2026)
+
+- **Feste Einträge in der Template-Sitemap.** `pages-sitemap.xml/route.ts` des Website-Templates
+  hängt `/search` und `/posts` fest an (`defaultSitemap`). Wer die Such- oder Posts-Übersicht
+  nicht ausliefert, meldet Google damit zwei 404-URLs pro Sprache als Sitemap-Fehler. Die festen
+  Einträge löschen, wenn die Routen nicht existieren — nur Dokumente aus der DB eintragen.
+- **Seiten nur über die Sitemap erreichbar.** Ein Crawl, der die Sitemap mit den intern
+  verlinkten Seiten abgleicht, fand 4 Seiten (×2 Sprachen) ohne einen einzigen internen Link —
+  das Menü kommt aus dem CMS, die Seiten wurden angelegt, aber nie eingehängt. Kein Code-Fix,
+  sondern eine Redaktionsfrage (verlinken oder offline nehmen); gehört in den Go-Live-Rundgang.
+
 ## 7. Weiteres (kurz)
 
 - **`metadataBase`** in der Root-`layout.tsx` setzen (`new URL(getServerSideURL())`), sonst warnt Next.js und OG-Bilder bekommen relative URLs.
 - **`<html lang="de">`** korrekt setzen (Crawler prüfen die Sprachangabe).
 - **Ein `<h1>` pro Seite**; H1-Keywords sollten auch im Fließtext vorkommen (häufiger Content-Report-Punkt).
+  **Falle im Template:** Der `HighImpact`-Hero zeigt nur Bilder/Slider, `NoHero` gar nichts — beide
+  rendern **keine** Überschrift. Startseite und alle Seiten ohne Hero haben dann keine H1, obwohl
+  `hero.title` im CMS gepflegt ist (karlingerhof: 8 Seiten). Fix ohne Designänderung:
+  `RenderHero` bekommt `pageTitle={page.title}`, die beiden Heroes rendern
+  `<h1 className="sr-only">{hero.title || pageTitle}</h1>`. `MediumImpact`/`LowImpact` haben ihre H1 schon.
 - **Structured Data** (JSON-LD, z. B. `Organization`, `BreadcrumbList`) via `<script type="application/ld+json">` im Layout/Template, wo sinnvoll.
 
 ## Quick-Checkliste für ein neues Projekt

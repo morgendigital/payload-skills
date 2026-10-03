@@ -108,6 +108,19 @@ CSP schützt vor XSS. Für Next.js + Payload (mit Rich Text Editor) muss sie sor
 - `pnpm audit` fand nur `dompurify` in `monaco-editor` (Admin-Codefeld) →
   `pnpm.overrides`.
 
+### Befunde aus dem GEO-Tool (Oktober 2026)
+
+- **Das Blank-Template bringt ein `Dockerfile`, aber kein `.dockerignore` mit.** `COPY . .`
+  kopiert dann die lokale `.env` samt Secrets in eine Image-Schicht — auch wenn sie in
+  `.gitignore` steht. Wer per Dockerfile statt Nixpacks baut: `.dockerignore` mit `.env`,
+  `.env.*`, `!.env.example`, `node_modules`, `.next`, `.git` anlegen.
+- **SSRF, sobald die App URLs abruft, die Nutzer eingeben** (Crawler, Link-Checker,
+  Webhook-Ziele, Bild-Import per URL): Ohne Prüfung erreicht der Server-Request interne Ziele —
+  die Datenbank im Dokploy-Netz, andere Container, `169.254.169.254`. Vor **jedem** Abruf den
+  Hostnamen auflösen und private/Loopback/Link-Local-Bereiche ablehnen, Weiterleitungen manuell
+  folgen und jeden Sprung erneut prüfen (`redirect: 'manual'`). Für lokale Tests per Env
+  abschaltbar, in Produktion nicht.
+
 ## 3. CORS
 
 ### Next.js API Routes
