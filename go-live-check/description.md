@@ -125,6 +125,77 @@ Health-Check selbst blockieren und die App fälschlich als down melden.
 Uptime-Monitor (z. B. UptimeRobot, Better Stack) auf dieselbe URL — Dokploys interner Check
 startet nur den Container neu, meldet aber niemandem, dass etwas passiert ist.
 
+### Konfiguration im Health-Endpoint (`checks`)
+
+Der zweite Teil, den Package Checker liest: ein `checks`-Objekt, in dem die App über ihre
+eigene Konfiguration Auskunft gibt — **nur Ja/Nein, Zahlen und Zeitpunkte, nie Werte**.
+Damit fällt auf, wenn nach einem Env-Umbau in Dokploy der Mailversand oder die Uploads still
+kaputt sind, lange bevor ein Kunde fragt, warum keine Formular-Mails mehr kommen.
+
+```ts
+// src/app/api/health/checks.ts
+import type { Payload } from 'payload'
+
+const set = (...names: string[]) => names.some((n) => !!process.env[n]?.trim())
+
+/**
+ * Was die Site braucht, als Ja/Nein. Kein Wert, kein Hostname, keine
+ * Fehlermeldung mit Details — der Endpoint ist öffentlich.
+ */
+export async function healthChecks(payload: Payload) {
+  const checks: Record<string, boolean | number | string | null> = {
+    database: true, // die Query in route.ts ist durchgelaufen
+    payloadSecret: set('PAYLOAD_SECRET'),
+    serverActionsKey: set('NEXT_SERVER_ACTIONS_ENCRYPTION_KEY'),
+    // Resend als Default oder Kunden-SMTP (form-submissions-email)
+    email: set('RESEND_API_KEY', 'SMTP_HOST'),
+  }
+  // Nur wenn das Projekt @payloadcms/storage-s3 nutzt:
+  checks.storage = set('S3_BUCKET') && set('S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY')
+
+  // Mit dem Fehlerprotokoll aus email-test: offene Versandfehler zählen.
+  try {
+    const { totalDocs } = await payload.count({
+      collection: 'mail-failures' as never,
+      where: { resolved: { not_equals: true } },
+    })
+    checks.mailFailures = totalDocs
+  } catch {
+    // Collection gibt es in diesem Projekt nicht — dann einfach weglassen.
+  }
+  return checks
+}
+```
+
+In `route.ts` nach der Datenbank-Query aufrufen und mit ausgeben:
+
+```ts
+const checks = await healthChecks(payload)
+return NextResponse.json(
+  { status: 'ok', commit, checks, timestamp: new Date().toISOString() },
+  { headers: { 'Cache-Control': 'no-store' } },
+)
+```
+
+**Das Format, das Package Checker erwartet:** `checks` auf oberster Ebene, Schlüssel aus
+Buchstaben/Ziffern (max. 40 Zeichen), Werte `true`/`false`, Zahlen, kurze Strings (z. B. ein
+ISO-Zeitpunkt wie `lastMailOk`) oder `null` für „nicht zutreffend“. Verschachteltes wird
+ignoriert. Ein Wert, der von `true` auf `false` kippt, löst eine Benachrichtigung aus; die
+Repo-Seite zeigt alle Werte unter **Configuration**, die Übersicht ein rotes „config issues“.
+
+Bewusst **Konfiguration, nicht Funktion**: `email: true` heißt „ein Adapter ist
+eingerichtet“, nicht „der SMTP-Server antwortet“ — ein `verify()` gehört nicht in einen
+Endpoint, der alle 15 Minuten abgefragt wird (siehe oben). Ob Mails wirklich rausgehen, zeigt
+`mailFailures` aus dem Fehlerprotokoll von [email-test](../email-test/description.md).
+
+Ergänzend prüft Package Checker bei Payload-Sites, die mit einer Dokploy-App verknüpft sind,
+die Env-Variablen direkt in Dokploy — **nur die Namen**, die Werte werden beim Einlesen
+verworfen: `PAYLOAD_SECRET`, `DATABASE_URI`/`DATABASE_URL`,
+`NEXT_SERVER_ACTIONS_ENCRYPTION_KEY`, `RESEND_API_KEY` oder `SMTP_HOST` (bei Mail-Adapter oder
+Form-Builder), `S3_BUCKET` + `S3_ACCESS_KEY_ID` (bei `storage-s3`), empfohlen
+`NEXT_PUBLIC_SERVER_URL` und `ALERT_RESEND_API_KEY`. Das greift auch für Sites, deren
+Health-Endpoint noch keine `checks` hat.
+
 ---
 
 ## Todo 2: SMTP — Kurzcheck vor dem Launch
@@ -497,6 +568,9 @@ wirklich nichts durchgerutscht ist:
       in Dokploy als Health Check Path eingetragen — plus externer Uptime-Monitor.
 - [ ] `/api/health` meldet den laufenden Commit (`commit` ist ein Hash, nicht `null`) und ist
       in Package Checker als Live URL des Repos eingetragen.
+- [ ] `/api/health` liefert `checks` (mindestens `email`, `payloadSecret`, `serverActionsKey`,
+      bei S3 `storage`) — alle `true`, keine Werte im Klartext; in Package Checker zeigt die
+      Repo-Seite unter **Configuration** nichts Rotes.
 - [ ] SMTP-Kurzcheck aus Todo 2 frisch gegen die Produktions-URL durchgespielt.
 - [ ] Cookie-Banner blockt Tracking bis zur Zustimmung, Footer-Button funktioniert, Kontrast
       geprüft, SalesViewer-Sonderfall entschieden.
