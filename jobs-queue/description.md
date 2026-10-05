@@ -62,6 +62,27 @@ Ausfall ist die Queue voll, und der erste Lauf danach kippt euch auf den kleinen
 den Speicher — dieselbe Drosselungs-Logik wie bei den Media-Skripten
 ([media-webp-variants](../media-webp-variants/description.md)).
 
+→ **Geplantes Veröffentlichen bei statischen Seiten: nicht über die CLI.** `payload jobs:run`
+läuft außerhalb von Next. `revalidatePath` wirft dort „Invariant: static generation store missing";
+ein Wrapper, der das schluckt (siehe [static-rendering](../static-rendering/description.md)),
+macht den Lauf zwar stabil, aber **die Revalidierung findet nicht statt**. Der Job veröffentlicht,
+die prerenderten Listen (Terminübersicht, Startseite) zeigen das Dokument erst nach Ablauf ihres
+`revalidate` — bei SAAC bis zu einer Stunde. Für Queues mit `schedulePublish` deshalb den
+HTTP-Endpoint aus dem laufenden Container ansprechen, dann laufen die Hooks in einem Next-Request:
+
+```js
+// scripts/run-jobs.mjs — Dokploy Schedule: `pnpm jobs:run`, */5 * * * *
+const res = await fetch(
+  `http://127.0.0.1:${process.env.PORT || 3000}/api/payload-jobs/run?allQueues=true&limit=20`,
+  { headers: { authorization: `Bearer ${process.env.JOBS_RUN_SECRET}` } },
+)
+console.log(`[jobs] ${res.status} ${await res.text()}`)
+process.exit(res.ok ? 0 : 1)
+```
+
+Zugriffsschutz dafür wie in Abschnitt 3. Gilt nur für Tasks, deren Wirkung eine Revalidierung
+braucht — reine Mail- oder Lösch-Jobs dürfen weiter über die CLI laufen.
+
 → **`--allQueues` nur, wenn ihr wirklich alle wollt.** Sobald es eine schwere Queue gibt (Exporte,
 Bildverarbeitung) und eine leichte (Mails), trennen: zwei Schedule Jobs mit unterschiedlicher
 Frequenz und unterschiedlichem `--queue`. Sonst blockiert ein 4-Minuten-Export den Mailversand.
@@ -101,6 +122,31 @@ jobs: {
   },
 }
 ```
+
+→ **`req.user` heißt nicht „Admin".** Hat das Projekt eine zweite Auth-Collection — Teilnehmer,
+Kunden, Mitglieder —, ist deren Login genauso `req.user`. Bei SAAC (05.10.2026) stand
+`if (req.user) return true` in `access.run`, und die `payload-jobs`-Collection hatte die
+Default-Access „eingeloggt". Jeder Teilnehmer konnte damit per REST einen `schedulePublish`-Job
+**ohne `user`** anlegen und ausführen — und der läuft mit `overrideAccess` und veröffentlicht oder
+depubliziert beliebige Dokumente. Deshalb auf die Collection prüfen und die Access der
+Jobs-Collection selbst mit absichern:
+
+```ts
+const isAdmin = ({ req }) => req.user?.collection === 'users'
+
+jobs: {
+  access: { run: canRunJobs /* Admin oder Secret */, queue: isAdmin, cancel: isAdmin },
+  jobsCollectionOverrides: ({ defaultJobsCollection }) => ({
+    ...defaultJobsCollection,
+    access: { create: isAdmin, read: isAdmin, update: isAdmin, delete: isAdmin },
+    admin: { ...defaultJobsCollection.admin, group: 'System', hidden: false }, // Abschnitt 5
+  }),
+}
+```
+
+→ **Fehlendes Secret darf nicht `Bearer undefined` erlauben.** Der Template-Vergleich
+`` header === `Bearer ${process.env.JOBS_RUN_SECRET}` `` lässt bei nicht gesetzter Variable genau diesen
+Header durch. Vor dem Vergleich prüfen, dass das Secret gesetzt ist.
 
 → **`JOBS_RUN_SECRET` gehört in die Dokploy-Env**, nicht ins Repo, und ist genauso zu behandeln
 wie `PAYLOAD_SECRET` (siehe [security-check §4](../security-check/description.md#4-environment-variables-absichern)).
@@ -175,6 +221,11 @@ psql "$DATABASE_URI" -c "select count(*) filter (where has_error), count(*) \
   from payload_jobs where completed_at is null;"
 ```
 
+→ **Beim Einschalten des Runners zuerst die Queue ansehen.** Ohne Runner sammeln sich Jobs
+monatelang an — bei SAAC zwei `schedulePublish`-Aufträge vom 19.06.2026, die zwei inzwischen
+wieder gepflegte News depubliziert hätten. Der erste Lauf führt alles Überfällige sofort aus.
+Offene Jobs (`completedAt: null`) vorher mit dem Kunden durchgehen und Veraltetes löschen.
+
 → **Nach jedem Deploy einmal prüfen.** Ein umbenannter Task-Slug lässt alte, noch wartende Jobs
 ins Leere laufen: Der Job liegt in der Queue, der Handler existiert nicht mehr. Beim Umbenennen
 eines Tasks entweder die Queue vorher leeren oder den alten Slug als No-op stehen lassen.
@@ -185,11 +236,14 @@ eines Tasks entweder die Queue vorher leeren oder den alten Slug als No-op stehe
    Fehlermeldung
 2. Dokploy Schedule Job mit `pnpm payload jobs:run --limit 20`, Zielcontainer muss laufen;
    schwere und leichte Queues über `--queue` trennen
-3. `autoRun` nur nach bewusstem Test (Container-Neustart ohne Traffic) und nie bei mehr als einer
+3. Bei `schedulePublish` und statischen Seiten: über den HTTP-Endpoint im Container, nicht über
+   die CLI — sonst keine Revalidierung
+4. Vor dem ersten Lauf: offene, überfällige Jobs prüfen
+5. `autoRun` nur nach bewusstem Test (Container-Neustart ohne Traffic) und nie bei mehr als einer
    Instanz
-4. Falls HTTP-Trigger: `jobs.access.run` mit eigenem Secret aus der Dokploy-Env, **nicht** die
-   Access Control aufweichen
-5. Jeder Task: idempotent, `limit` in jeder Query, `retries` gesetzt
-6. `payload-jobs` im Admin sichtbar, Warteschlangen-Alarm per Resend an die Agentur, gedrosselt
-7. Nach jedem Deploy: hängen Jobs? Task-Slugs unverändert?
-8. Löschfristen aus der Datenschutzerklärung gegen die tatsächlich laufenden Jobs halten
+6. Falls HTTP-Trigger: `jobs.access.run` mit eigenem Secret aus der Dokploy-Env, **nicht** die
+   Access Control aufweichen; `req.user` auf die Admin-Collection prüfen, Jobs-Collection mit absichern
+7. Jeder Task: idempotent, `limit` in jeder Query, `retries` gesetzt
+8. `payload-jobs` im Admin sichtbar, Warteschlangen-Alarm per Resend an die Agentur, gedrosselt
+9. Nach jedem Deploy: hängen Jobs? Task-Slugs unverändert?
+10. Löschfristen aus der Datenschutzerklärung gegen die tatsächlich laufenden Jobs halten
