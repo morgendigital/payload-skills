@@ -186,6 +186,11 @@ Schlägt der Build fehl, behält Dokploy den laufenden Container — das Risiko 
 "start": "cross-env NODE_OPTIONS=\"--no-deprecation $NODE_OPTIONS\" next start"
 ```
 
+Für **kleinere Docker-Images** auf Dokploy (Railpack oder Dockerfile): `output: 'standalone'`
+und Start auf `node .next/standalone/server.js` — siehe
+[docker-standalone](../docker-standalone/description.md). Ohne Standalone liegen
+Payload/Next-Apps oft bei 1,5–3 GB Unique pro Image und füllen den Host.
+
 **Memory-Limit, Heap-Limit und Speicher-Log: [memory-limit](../memory-limit/description.md).**
 
 **Die Details zu Params, Middleware-Rewrites, Revalidierung und der Build/Laufzeit-Trennung stehen in [static-rendering](../static-rendering/description.md).**
