@@ -26,9 +26,22 @@ export default nextConfig;
 ```
 
 Nach dem Build liegen unter `.next/standalone/` der Server und die nötigen
-Abhängigkeiten; `.next/static` und `public` müssen zur Laufzeit daneben liegen
-(Dockerfile kopiert sie; bei Railpack bleiben sie im Workspace, wenn der Start
-aus dem App-Root läuft).
+Abhängigkeiten. `.next/static` und `public` kopiert Next **nicht** dorthin, der
+Server liefert sie aber nur von dort aus: `server.js` macht
+`process.chdir(__dirname)` und sucht `.next/static` und `public` relativ zu
+`.next/standalone`. Auch bei Railpack und Start aus dem App-Root gilt das — ohne
+Kopieren antwortet jede CSS-/JS-Anfrage mit **404** (gemessen). Im Dockerfile
+kopiert der Runner-Stage sie (Todo 3); bei Railpack muss der Build sie kopieren,
+z. B. am Ende von `scripts/build.mjs`:
+
+```js
+import { cpSync } from "node:fs";
+import { join } from "node:path";
+
+const standalone = join(process.cwd(), ".next", "standalone");
+cpSync(join(process.cwd(), ".next", "static"), join(standalone, ".next", "static"), { recursive: true });
+cpSync(join(process.cwd(), "public"), join(standalone, "public"), { recursive: true });
+```
 
 ## Todo 2: Railpack (Dokploy Build-Type „Railpack")
 
