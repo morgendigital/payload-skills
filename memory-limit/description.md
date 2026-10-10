@@ -217,3 +217,16 @@ Der Rest ist recherchiert, aber nicht gemessen:
 - [ ] Speicher-Log aktiv; `heapLimit` in der ersten Zeile entspricht dem gesetzten Wert.
 - [ ] Nach ein paar Tagen: Verlauf nach der Tabelle in Todo 4 eingeordnet.
 - [ ] Erst danach: Heap-Snapshot (JS) oder `MALLOC_ARENA_MAX`/imgproxy (nativ).
+
+## Checkliste für bestehende Apps
+
+Vor dem Limit prüfen, sonst wirkt es nicht oder nur halb:
+
+| Prüfpunkt | Wo | Soll |
+| --------- | -- | ---- |
+| Start-Skript hängt `$NODE_OPTIONS` an | `package.json` → `scripts.start` | `cross-env NODE_OPTIONS="--no-deprecation $NODE_OPTIONS" …` |
+| Node-Version festgelegt | `package.json` → `engines.node` | `>=22.13.0`, sonst wählt Nixpacks eine alte Version |
+| `sharp` als externes Paket | `next.config.*` → `serverExternalPackages` | `['sharp']` mitführen |
+| Standalone-Build | `next.config.*` → `output` | `'standalone'`, damit das Image klein bleibt |
+
+Der erste Punkt ist der häufigste Fehler: Mit `cross-env NODE_OPTIONS=…` ohne `$NODE_OPTIONS` ersetzt das Skript die Variable, und ein Heap-Limit aus Dokploy kommt nie an.
