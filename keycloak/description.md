@@ -6,6 +6,8 @@
 
 > **⚠️ Neue Befunde zuerst lesen:** Die Abschnitte **„Befunde aus frechinger“** und **„Neue Befunde aus dankl“** (am Ende, vor *Sicherheit*) korrigieren Teile dieses Dokuments für `better-auth@^1.7` — u. a. heißt der Callback-Pfad dort **`/api/auth/callback/<providerId>`**, nicht `/api/auth/oauth2/callback/<providerId>` wie in Schnellstart-Tabelle, Golden Path und Copy-Paste-Prompt. Bei Widerspruch gelten die neuen Befunde.
 
+> **⚠️ Pflicht in jedem Projekt:** Abschnitt **„Standard: Userverwaltung nur für Admins“** — Payload-`roles` (`admin` / `contentManagement`) aus Keycloak, Userverwaltung nur für `admin`, Redaktion pflegt alle Inhalte. Nicht pro Projekt neu klären.
+
 ## Praxis vor dem ersten Login
 
 1. Schnellstart-Tabelle unten mit der echten **`ORIGIN`** durchgehen.
@@ -763,6 +765,11 @@ const canView =
 
 ## Trennung: Keycloak-Rollen vs. Payload-Konfiguration
 
+> **Für die Admin/Redaktion-Grenze nicht mehr offen:** Der Hausstandard steht in
+> **„Standard: Userverwaltung nur für Admins“** (weiter unten, nach *Variante B+*) — `admin` sieht
+> alles, die Redaktion alles außer der Userverwaltung. Der Text hier beschreibt das ältere,
+> allgemeinere Drei-Rollen-Muster und gilt nur, wenn ein Projekt ausdrücklich mehr Stufen braucht.
+
 **Empfohlenes Muster für euch:**
 
 - In **Keycloak** legt ihr **drei Client-Rollen** am relevanten Client fest (z. B. `admin`, `editor`, `viewer`). Diese Rollen sind die **autoritative Quelle dafür**, welche **Zuordnung / welches Zugriffslevel ein Account in der Payload-`users`-Collection** hat — also wer das CMS überhaupt in welcher **Rolle** nutzen darf (im Sinne von Payload-`access` auf **`users`** und davon abgeleiteten Admin-Fähigkeiten). Konkrete Mapping-Tabelle (Keycloak-Rolle → Payload `role`-Feld o. Ä.) bleibt projektspezifisch.
@@ -830,6 +837,146 @@ auth: {
 ```
 
 Kein lokales Passwort-Feld erscheint im Admin trotzdem (die Login-Form selbst rendert nur bei aktiver lokaler Strategy) — `enableFields` betrifft nur das Schema, nicht die UI.
+
+## Standard: Userverwaltung nur für Admins (Referenz: dankl, Oktober 2026)
+
+**Hausstandard, gehört in jedes Projekt mit Keycloak-Login** — auch wenn der Kunde nur eine
+Person in der Redaktion hat und auch wenn heute noch niemand außer uns einloggt. Nicht pro
+Projekt neu klären; das Rollen-Gate aus *Variante B+* allein reicht **nicht**: Es entscheidet nur,
+wer ins CMS kommt — danach darf mit `access: authenticated` jede:r alles, auch User anlegen,
+ändern und löschen.
+
+### Festgelegt
+
+| Keycloak-Rolle | Payload-`roles` | Wer | Darf |
+|---|---|---|---|
+| `admin` | `admin` | Agentur / Entwickler | alles, inkl. Userverwaltung |
+| Wert aus `KEYCLOAK_CMS_REQUIRED_ROLE` | `contentManagement` | Redaktion des Kunden | alle Inhalte (Seiten, Medien, Globals, Formulare, Einsendungen …), **keine** Userverwaltung |
+| — (Passwort-Login, solange Keycloak nicht konfiguriert ist) | — | Übergang | alles, wie vor Keycloak |
+
+- **Einzige Admin-Grenze ist die `users`-Collection.** Redakteure sehen sie nicht: nicht im
+  Menü, Listen- und Edit-Routen antworten mit 404. Ihr **eigenes** Dokument lesen sie trotzdem —
+  die Account-Seite (`/admin/account`, Avatar oben rechts) braucht es, dort sitzen Logout und der
+  Keycloak-Passwortlink. Ändern können sie es nicht (siehe Fallen).
+- **Weitere Admin-only-Bereiche nur, wenn das Projekt sie ausdrücklich verlangt** — dann mit
+  derselben `isAdmin`-Funktion, nicht mit einem zweiten Mechanismus.
+- **Den Rollennamen nicht erfragen.** `KEYCLOAK_CMS_REQUIRED_ROLE` ist ein Env-Wert, den wir beim
+  Anlegen des Keycloak-Clients selbst setzen; der Code ist für jeden Wert gleich. `admin` bleibt
+  hart codiert (agenturweit).
+- **Rollennamen `admin` / `contentManagement`** sind in dankl und lamedica identisch — in neuen
+  Projekten nicht umbenennen.
+
+### Bausteine
+
+**1. `roles`-Feld an `users`** — abgeleitet, nie von Hand gepflegt. Keycloak bleibt die Quelle;
+`keycloakRoles` (Rohliste aus dem Token, nur Anzeige) bleibt daneben bestehen.
+
+```ts
+{
+  name: 'roles',
+  type: 'select',
+  hasMany: true,
+  options: [
+    { label: 'Admin', value: 'admin' },
+    { label: 'Content Management', value: 'contentManagement' },
+  ],
+  admin: {
+    readOnly: true,
+    description: 'Wird bei jedem Login aus den Keycloak-Rollen übernommen.',
+  },
+},
+```
+
+**2. Strategy schreibt `roles` bei jedem Request mit** — im selben `payload.create`/`payload.update`
+wie `keycloakRoles`, hinter dem Rollen-Gate (wer bis hier kommt, hat `admin` oder die
+Pflichtrolle):
+
+```ts
+const payloadRoles: UserRole[] = roles.includes(ADMIN_ROLE) ? ['admin'] : ['contentManagement']
+// create: { …, keycloakRoles: roles, roles: payloadRoles }
+// update, wenn sich betterAuthUserId, keycloakRoles ODER roles geändert haben
+```
+
+Weil die Strategy auf jedem Request läuft, greift ein Rollenwechsel in Keycloak mit dem nächsten
+Login/Token-Refresh — kein Abgleich von Hand.
+
+**3. `src/access/roles.ts`**
+
+```ts
+import type { Access, AccessArgs } from 'payload'
+
+import type { User } from '@/payload-types'
+
+/**
+ * Payload roles, written from Keycloak on every login (`@/access/betterAuthStrategy`):
+ * Keycloak `admin` → `admin` (developers, see everything), `KEYCLOAK_CMS_REQUIRED_ROLE` →
+ * `contentManagement` (editors, no user management). Same names as in lamedica.
+ */
+export type UserRole = 'admin' | 'contentManagement'
+
+// Minimal shape so it works for `req.user` as well as the admin UI's ClientUser (`admin.hidden`).
+type AuthUser = { roles?: User['roles']; _strategy?: string } | null | undefined
+
+export const isAdmin = (user: AuthUser): boolean => {
+  if (!user) return false
+  // Password login only exists while Keycloak isn't configured (see Users `auth`). Those users
+  // carry no Keycloak roles and had full access before roles existed — keep it that way.
+  if (user._strategy === 'local-jwt') return true
+  return Array.isArray(user.roles) && user.roles.includes('admin')
+}
+
+export const adminOnly = ({ req: { user } }: AccessArgs<User>): boolean => isAdmin(user)
+
+/** Admins see every user; everyone else only their own profile (Keycloak account link). */
+export const adminOrSelf: Access<User> = ({ req: { user } }) => {
+  if (!user) return false
+  if (isAdmin(user)) return true
+  return { id: { equals: user.id } }
+}
+```
+
+**4. `users`-Collection**
+
+```ts
+access: {
+  admin: authenticated, // Zugang zum Admin-Panel überhaupt — NICHT adminOnly, sonst ist die Redaktion ausgesperrt
+  create: adminOnly,
+  delete: adminOnly,
+  read: adminOrSelf,
+  update: adminOnly,
+},
+admin: {
+  defaultColumns: ['name', 'email', 'roles'],
+  // `read` lets editors see their own document, which would keep the collection in the nav.
+  hidden: ({ user }) => !isAdmin({ roles: user?.roles, _strategy: user?._strategy }),
+  useAsTitle: 'name',
+},
+```
+
+### Fallen
+
+- **`read: adminOnly` sperrt die Account-Seite.** Payloads Account-View lädt das eigene Dokument
+  mit `overrideAccess: false` (`@payloadcms/next` → `views/Document/getDocumentData.js`) — ohne
+  Leserecht kommt nichts zurück und die View wirft `not-found`. Deshalb `adminOrSelf`. (Im
+  Quellcode von Payload 3.90 geprüft; lamedica hat noch `read: adminOnly`.)
+- **`adminOrSelf` allein lässt die Collection im Menü** — ein `read`, das irgendetwas erlaubt,
+  reicht Payload für den Nav-Eintrag. Erst `admin.hidden` blendet Menü sowie Listen- und
+  Edit-Routen aus.
+- **`admin.hidden` lässt die Account-Seite in Ruhe.** Die Sichtbarkeitsprüfung
+  (`getVisibleEntities`) sitzt in der Document- und der List-View, die Account-View
+  (`views/Account/index.js`) prüft sie nicht. Beides zusammen ergibt genau: Collection weg, eigenes
+  Profil da.
+- **`admin.hidden` bekommt einen `ClientUser`, nicht `User`** — daher der Minimal-Typ in
+  `isAdmin`. `hidden` wird serverseitig mit `req.user` aufgerufen; ein Fehler in der Funktion
+  versteckt die Collection (Payload fängt ihn und gibt `true` zurück).
+- **Kein Update aufs eigene Dokument.** Die E-Mail ist das Zuordnungskriterium der Strategy
+  (`email` **oder** `betterAuthUserId`). Dürfte eine Redakteurin ihre E-Mail auf die eines Admins
+  ändern, könnte beim nächsten Login des Admins ihr Dokument gefunden werden. Name und E-Mail kommen
+  ohnehin aus Keycloak.
+- **Übergangsphase über `_strategy`, nicht über die Env.** Passwort-User erkennt `isAdmin` an
+  `_strategy === 'local-jwt'` (Payloads Name für den lokalen JWT-Login). Sobald Keycloak
+  konfiguriert ist, schaltet `disableLocalStrategy` den Passwort-Login ab, diesen Fall gibt es dann
+  nicht mehr. Kein Env-Lesen in jeder Access-Funktion nötig.
 
 ## Passwortänderung nur noch über Keycloak
 
@@ -988,6 +1135,50 @@ Referenz-Implementierung: dankl-Repo, `src/lib/auth.ts`, `src/lib/keycloak.ts`,
   Werte. Häufigster Fall: `BETTER_AUTH_SECRET` fehlt, weil er (anders als die Keycloak-Werte)
   nicht aus dem Keycloak-Client kommt, sondern selbst erzeugt wird
   (`openssl rand -base64 32`, verschieden von `PAYLOAD_SECRET`).
+- **Rollen und Keycloak-Sitzung laufend nachprüfen — nicht nur beim Login** (gebaut,
+  typgeprüft, noch **nicht** live getestet). Ohne das liest Better Auth die Keycloak-Rollen nur
+  beim Login: Ein in Keycloak entzogenes `admin` oder eine beendete/abgelaufene Keycloak-Sitzung
+  erreicht eine laufende CMS-Sitzung erst nach deren Ablauf (Better-Auth-Default 7 Tage,
+  verlängert sich bei Nutzung). Der „Standard: Userverwaltung nur für Admins“ oben braucht diesen
+  Baustein, damit ein Rollenwechsel zeitnah greift.
+
+  Lösung ohne neue Dependency und ohne Keycloak-Konfiguration: Die Strategy holt die Rollen nicht
+  aus `session.user.keycloakRoles`, sondern aus dem gespeicherten Access-/ID-Token des Accounts.
+  Ist das Access-Token abgelaufen (Keycloak-Default 5 Minuten), erneuert
+  `auth.api.getAccessToken({ body: { accountId }, headers })` es per Refresh-Token — Better Auth
+  refresht dort nur, wenn das Token abgelaufen ist, und der Account-Hook (`syncKeycloakRoles`)
+  schreibt die neuen Rollen mit. Lehnt Keycloak den Refresh ab, werden alle CMS-Sitzungen des
+  Users gelöscht:
+
+  ```ts
+  const { internalAdapter } = await auth.$context
+  const account = (await internalAdapter.findAccounts(userId)).find((a) => a.providerId === providerId)
+  let { accessToken, idToken } = account
+  if (abgelaufen(account.accessTokenExpiresAt)) {
+    try {
+      ;({ accessToken, idToken } = await auth.api.getAccessToken({ body: { accountId: account.id }, headers }))
+    } catch {
+      await internalAdapter.deleteUserSessions(userId) // Keycloak sagt nein → raus aus dem CMS
+      return null
+    }
+  }
+  return extractKeycloakRoles([accessToken, idToken], clientId)
+  ```
+
+  Details in dankl `src/lib/auth.ts` → `getCurrentKeycloakRoles()`:
+  - Parallele Admin-Requests beim Ablauf teilen sich **einen** Refresh (`Map<userId, Promise>`) —
+    wichtig, falls im Realm „Revoke Refresh Token“ an ist, sonst würde der zweite Refresh scheitern
+    und den User fälschlich abmelden.
+  - **Fail closed:** `getAccessToken` verpackt jeden Fehler als `FAILED_TO_GET_ACCESS_TOKEN`; ein
+    nicht erreichbares Keycloak ist von einer Ablehnung nicht unterscheidbar und meldet beim
+    nächsten Check alle ab. Bewusst so — einloggen kann in dem Moment ohnehin niemand.
+  - **Folge für die Redaktion:** Das CMS folgt jetzt den Sitzungs-Timeouts des Realms. Länger
+    untätig als „SSO Session Idle“ (Keycloak-Default 30 Minuten) → neu anmelden.
+  - Verworfene Alternative: **OIDC Back-Channel-Logout** (Keycloak ruft beim Sitzungsende eine
+    App-URL auf). Sofort, aber erkennt **keine** Rollenänderungen (Rolle entziehen beendet keine
+    Keycloak-Sitzung), braucht `jose` als direkte Dependency für die Signaturprüfung und eine von
+    Keycloak erreichbare App (kein localhost). Better Auth 1.7.7 bringt Back-Channel-Logout nur als
+    *Provider* mit, nicht als Empfänger. Bei Bedarf zusätzlich zur Nachprüfung, nicht statt ihr.
 
 ## Sicherheit (Kurz)
 
@@ -1015,6 +1206,11 @@ KEYCLOAK_CMS_PROVIDER_ID serverseitig und NEXT_PUBLIC_KEYCLOAK_CMS_PROVIDER_ID i
 publicSiteRootUrl falls NEXT_PUBLIC_SERVER_URL fehlerhaft, emailAndPassword disabled + session.cookieCache disabled,
 trustedOrigins siteRoot + http://localhost:3000, Payload users mit disableLocalStrategy enableFields/optionalPassword,
 betterAuthStrategy mit Auto-Provisioning; DISABLE_KEYCLOAK_USER_PROVISIONING nur für Login-only setzen.
+Rollen nach „Standard: Userverwaltung nur für Admins“: Payload-Feld roles (admin/contentManagement) aus Keycloak,
+src/access/roles.ts (isAdmin inkl. local-jwt, adminOnly, adminOrSelf), users: read adminOrSelf, create/update/delete
+adminOnly, admin.hidden für Nicht-Admins; Rollenname der Redaktion kommt aus KEYCLOAK_CMS_REQUIRED_ROLE — nicht erfragen.
+Rollen in der Strategy nicht aus session.user, sondern per getCurrentKeycloakRoles (Token-Refresh bei Ablauf,
+bei Ablehnung deleteUserSessions) — siehe „Neue Befunde aus dankl“.
 Keycloak: Valid redirect URIs = ORIGIN/api/auth/oauth2/callback/<providerId>; Post-Logout-URIs bytegenau wie LogoutButton.
 ```
 
