@@ -4,6 +4,8 @@
 
 **Standard für neue Repos / KI-One-Shots:** **Variante B (Brandportal)** und der Abschnitt **Golden Path** — nicht zuerst Variante A (Mongo-Scan, zwei Clients), sonst raten Modelle oft zu Discovery-only, falscher Auth-Route oder ohne Auto-Provision (**400**, **Loop auf `/admin/login`**).
 
+> **⚠️ Neue Befunde zuerst lesen:** Die Abschnitte **„Befunde aus frechinger“** und **„Neue Befunde aus dankl“** (am Ende, vor *Sicherheit*) korrigieren Teile dieses Dokuments für `better-auth@^1.7` — u. a. heißt der Callback-Pfad dort **`/api/auth/callback/<providerId>`**, nicht `/api/auth/oauth2/callback/<providerId>` wie in Schnellstart-Tabelle, Golden Path und Copy-Paste-Prompt. Bei Widerspruch gelten die neuen Befunde.
+
 ## Praxis vor dem ersten Login
 
 1. Schnellstart-Tabelle unten mit der echten **`ORIGIN`** durchgehen.
@@ -908,6 +910,84 @@ Abweisung, Logout inkl. Keycloak-Sitzung, Kontowechsel.
   Exit 1 beim blossen `import`. Loesung: `getAuth = () => (globalThis._auth ??= betterAuth({...}))`,
   die Route antwortet ohne eingerichteten Keycloak mit 404, die Strategy steigt vorher aus.
   Betrifft dawi genauso (`export const auth = betterAuth(...)` auf Modulebene).
+
+## Neue Befunde aus dankl (better-auth 1.7.7, Keycloak `northlight`-Realm, Oktober 2026)
+
+Ergänzt — und korrigiert, wo genannt — die Abschnitte oben. Login inkl. Rollen-Gate und
+Auto-Provisioning sowie Logout sind live gegen `keycloak.northlight.website` getestet; Punkte, die nur im
+Quellcode der installierten Version geprüft sind, sind als solche markiert.
+Referenz-Implementierung: dankl-Repo, `src/lib/auth.ts`, `src/lib/keycloak.ts`,
+`src/access/betterAuthStrategy.ts`.
+
+- **Callback-Pfad: `/api/auth/callback/<providerId>` (korrigiert Schnellstart-Tabelle, Golden
+  Path, Abschnitt „Keycloak-Konfiguration“ und Copy-Paste-Prompt).** Mit `better-auth@^1.7` sind
+  `genericOAuth`-Provider normale Social-Provider; der Callback hat **kein** `oauth2`-Segment
+  mehr. Wer den Keycloak-Client nach der alten Tabelle anlegt, bekommt beim Login
+  **„Invalid parameter: redirect_uri“** von Keycloak. Diagnose: In der Adresszeile der
+  Keycloak-Fehlerseite steht der gesendete `redirect_uri` (URL-kodiert) — bytegenau mit
+  „Valid redirect URIs“ des Clients vergleichen. Im Keycloak-Client eintragen:
+  `ORIGIN/api/auth/callback/<providerId>` (Redirect), `ORIGIN/admin/login` (Post-Logout),
+  `ORIGIN` oder `+` (Web origins).
+- **Keycloak-Logout baut Better Auth schon seit 1.7.2 selbst** (geprüft im installierten
+  1.7.2 von lamedica: `endSessionEndpoint`/`postLogoutRedirectURI` in den Typen,
+  `createEndSessionURL` in `api/routes/sign-out.mjs`). Der frechinger-Befund gilt also nicht
+  erst ab 1.7.5. Die handgebaute `getKeycloakLogoutUrl` sowie `NEXT_PUBLIC_KEYCLOAK_ISSUER` und
+  `NEXT_PUBLIC_KEYCLOAK_CMS_CLIENT_ID` sind in jedem 1.7.x-Projekt entbehrlich.
+- **`signOut({ disableRedirect: true })` statt `fetchOptions: { redirect: 'manual' }`**
+  (Logout live getestet): Der Body-Parameter
+  `disableRedirect` lässt den `Location`-Header weg, die Antwort enthält trotzdem `{ url }`
+  (inkl. `id_token_hint`, `client_id`, `post_logout_redirect_uri`). Ohne ihn folgt `fetch` dem
+  Redirect zu Keycloak und scheitert an CORS.
+
+  ```ts
+  const result = await authClient.signOut({ disableRedirect: true })
+  window.location.href = result.data?.url || '/admin/login'
+  ```
+
+- **Payloads MongoDB-Verbindung wiederverwenden statt eigenem `MongoClient`.** Kein zweiter
+  Connection-Pool, und `mongodb` muss **nicht** als direkte Dependency rein: Unter pnpm ist der
+  Treiber nur transitiv (über mongoose) da und aus `src/` **nicht** importierbar; Better Auths
+  `mongodb`-Peer-Dependency löst pnpm automatisch auf den vorhandenen Treiber auf (gleiche
+  Version, keine zweite Kopie). Setzt die lazy `getAuth(payload)`-Factory voraus
+  (Route: `getAuth(await getPayload({ config }))`, Strategy: `getAuth(payload)`).
+
+  ```ts
+  import type { MongooseAdapter } from '@payloadcms/db-mongodb'
+
+  const db = (payload.db as MongooseAdapter).connection.db
+  if (!db) throw new Error('Payload database connection is not open')
+  betterAuth({ database: mongodbAdapter(db, { transaction: false }) /* … */ })
+  ```
+
+- **Rollen-Sync ohne `ObjectId`/direkten Collection-Zugriff** (live bestätigt — der Login kam
+  durchs Rollen-Gate): Der `input: false`-Filter sitzt nur in `parseInputData` /
+  `parseAdditionalUserInputFromProviderProfile` (`db/schema.mjs`), **nicht** im Adapter. Im
+  Account-Hook daher Better Auths eigenen Adapter nutzen — er rechnet die User-ID selbst um:
+
+  ```ts
+  const syncKeycloakRoles = async (account: Account) => {
+    const roles = extractKeycloakRoles([account.accessToken, account.idToken], clientId)
+    const { internalAdapter } = await auth.$context
+    await internalAdapter.updateUser(account.userId, { keycloakRoles: roles })
+  }
+  ```
+
+- **`discoveryUrl` + feste Endpunkte zusammen:** Mit erreichbarer Discovery verifiziert 1.7.7
+  das ID-Token gegen die JWKS und sendet eine `nonce` mit (sichtbar in der Auth-URL); ohne
+  Discovery bleiben die festen Endpunkte und `accountSubject: ({ profile }) => String(profile.sub)`
+  greifen.
+- **Provider-ID und Account-Konsolen-URL brauchen kein `NEXT_PUBLIC_*`** — auch unabhängig von
+  der Better-Auth-Version: `BeforeLogin` als Server Component liest die Server-Env zur Laufzeit
+  und reicht die Provider-ID an einen Client-Button; `LogoutButton` und das `ui`-Feld bekommen
+  sie per `clientProps`. Ergebnis für dankl: nur `KEYCLOAK_ISSUER`, `KEYCLOAK_CMS_CLIENT_ID`,
+  `KEYCLOAK_CMS_CLIENT_SECRET`, `KEYCLOAK_CMS_REQUIRED_ROLE`, `BETTER_AUTH_SECRET` (optional
+  `KEYCLOAK_CMS_PROVIDER_ID`). `KEYCLOAK_REALM` liest weder dankl noch lamedica — der Realm
+  steckt im Issuer.
+- **Diagnose „Keycloak is not configured“:** Der Dev-Endpoint `/api/auth-redirect-uris` gibt in
+  dankl zusätzlich `missingEnv` zurück — nur die **Namen** der leeren Pflicht-Variablen, nie
+  Werte. Häufigster Fall: `BETTER_AUTH_SECRET` fehlt, weil er (anders als die Keycloak-Werte)
+  nicht aus dem Keycloak-Client kommt, sondern selbst erzeugt wird
+  (`openssl rand -base64 32`, verschieden von `PAYLOAD_SECRET`).
 
 ## Sicherheit (Kurz)
 
