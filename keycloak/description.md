@@ -619,6 +619,7 @@ Kurzreferenz für Support, Debugging und **KI-Prompts** — vor Refactoring imme
 | OAuth **302**, danach **`/admin/login`**-Loop | Kein Payload-**User** und **kein** Auto-Provision; oder **`DISABLE_KEYCLOAK_USER_PROVISIONING=true`** gesetzt, obwohl kein User existiert |
 | **404** auf `/api/auth/...` | Request landet im Payload-**Catch-All** → Auth-Route **spezifischer** anlegen oder **Root-**`app/api/auth/[...all]` verwenden (siehe Routing-Priorität) |
 | Logout bricht ab / Keycloak-Fehler | **`post_logout_redirect_uri`** in Keycloak **nicht** bytegenau wie im Code (z. B. `/admin/login` vs. `/admin`) oder **`client_id`** falsch |
+| Nach Keycloak-Login Weiterleitung statt Admin, Log nur `ERROR [Better Auth]:  { status: 403, statusText: 'Forbidden' }` (lokal ok, auf dem Server nicht) | **Cloudflare** blockt die Server-Requests an Keycloak (Managed Challenge) → IP-Access-Rule für den Application-Server, siehe **„Befunde aus tarretory“** |
 
 ## Ablauf: Website-Login (`keycloak-ui`, Variante A)
 
@@ -1179,6 +1180,55 @@ Referenz-Implementierung: dankl-Repo, `src/lib/auth.ts`, `src/lib/keycloak.ts`,
     Keycloak-Sitzung), braucht `jose` als direkte Dependency für die Signaturprüfung und eine von
     Keycloak erreichbare App (kein localhost). Better Auth 1.7.7 bringt Back-Channel-Logout nur als
     *Provider* mit, nicht als Empfänger. Bei Bedarf zusätzlich zur Nachprüfung, nicht statt ihr.
+
+## Befunde aus tarretory (Staging, Oktober 2026): Cloudflare blockt Server-Requests
+
+**Jeder Application-Server, auf dem ein Projekt mit Keycloak-Login läuft, braucht in Cloudflare
+eine IP-Access-Rule für `keycloak.northlight.website`.** Gilt pro Server, nicht pro Projekt — und
+auch dann, wenn Keycloak im selben Dokploy läuft: Die App spricht Keycloak über die öffentliche
+Domain an, die Requests gehen also durch Cloudflare.
+
+**Symptom:** Keycloak-Login klappt, nach der Rückkehr landet man aber nicht im Admin, sondern wird
+weitergeleitet (bei tarretory auf die Startseite). Im Log der App genau eine Zeile:
+
+```text
+ERROR [Better Auth]:  { status: 403, statusText: 'Forbidden' }
+```
+
+Lokal funktioniert alles — dort kommen die Requests vom eigenen Rechner, nicht vom Server.
+
+**Ursache:** Cloudflare vor `keycloak.northlight.website` beantwortet die Server-zu-Server-Requests
+eines Servers ohne Freigabe mit einer **Managed Challenge** (`HTTP 403`, `server: cloudflare`,
+`cf-mitigated: challenge`, HTML-Seite „Just a moment…“). Der Browser löst die Challenge per
+JavaScript, deshalb erscheint die Keycloak-Login-Seite normal; der Server kann das nicht.
+
+- Die leere Meldung vor dem Objekt kommt aus `better-auth/dist/api/routes/callback.mjs`
+  (`logger.error("", e)` nach fehlgeschlagenem Tausch Code → Token). Danach leitet Better Auth auf
+  seine Error-URL um.
+- Nur `status`/`statusText` im Log, weil betterFetch den Response-Body nur bei JSON ins
+  Fehlerobjekt übernimmt. Keycloak selbst antwortet auf Token-Fehler immer mit JSON (gemessen:
+  `401 unauthorized_client`, `400 invalid_grant`, `403 {"error":"Invalid origin"}`) — **ein 403
+  ohne weitere Felder heißt: Die Antwort kam nicht von Keycloak.**
+
+**Betroffen sind alle Server-Requests an Keycloak**, nicht nur der Login: Token-Tausch, Discovery,
+JWKS (`/certs`), UserInfo und der Token-Refresh. Letzterer ist der gefährliche Fall: Scheitert der
+Refresh, wertet `getCurrentKeycloakRoles()` das als Ablehnung durch Keycloak und meldet alle aus
+(fail closed, siehe „Neue Befunde aus dankl“). Fällt die Freigabe später weg (neue Server-IP,
+Regel gelöscht), ist deshalb jede:r Eingeloggte nach spätestens 5 Minuten draußen.
+
+**Prüfen** (auf dem Application-Server, ohne Credentials, ändert nichts):
+
+```bash
+curl -s -i -X POST https://keycloak.northlight.website/realms/northlight/protocol/openid-connect/token \
+  -d 'grant_type=authorization_code&code=x&client_id=<client-id>' | head -30
+```
+
+- `401` mit Keycloak-JSON (`unauthorized_client`) → Server kommt durch.
+- `403` mit `server: cloudflare` / `cf-mitigated: challenge` → IP-Access-Rule fehlt.
+
+**Lösung:** In Cloudflare eine IP-Access-Rule für die IP des Application-Servers anlegen. Danach
+denselben `curl` wiederholen. `BETTER_AUTH_URL` o. Ä. hat damit nichts zu tun — die URLs stimmen,
+der Request kommt nur nicht bis Keycloak durch.
 
 ## Sicherheit (Kurz)
 
