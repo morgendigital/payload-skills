@@ -4,7 +4,7 @@
 
 **Standard für neue Repos / KI-One-Shots:** **Variante B (Brandportal)** und der Abschnitt **Golden Path** — nicht zuerst Variante A (Mongo-Scan, zwei Clients), sonst raten Modelle oft zu Discovery-only, falscher Auth-Route oder ohne Auto-Provision (**400**, **Loop auf `/admin/login`**).
 
-> **⚠️ Neue Befunde zuerst lesen:** Die Abschnitte **„Befunde aus frechinger“** und **„Neue Befunde aus dankl“** (am Ende, vor *Sicherheit*) korrigieren Teile dieses Dokuments für `better-auth@^1.7` — u. a. heißt der Callback-Pfad dort **`/api/auth/callback/<providerId>`**, nicht `/api/auth/oauth2/callback/<providerId>` wie in Schnellstart-Tabelle, Golden Path und Copy-Paste-Prompt. Bei Widerspruch gelten die neuen Befunde.
+> **⚠️ Neue Befunde zuerst lesen:** Die Abschnitte **„Befunde aus frechinger“** und **„Neue Befunde aus dankl“** (am Ende, vor *Sicherheit*) korrigieren Teile dieses Dokuments für `better-auth@^1.7` — u. a. heißt der Callback-Pfad dort **`/api/auth/callback/<providerId>`**, nicht `/api/auth/oauth2/callback/<providerId>` (Pfad vor 1.7; in Schnellstart-Tabelle, Golden Path, „Keycloak-Konfiguration“ und Copy-Paste-Prompt inzwischen korrigiert). Bei Widerspruch gelten die neuen Befunde.
 
 > **⚠️ Pflicht in jedem Projekt:** Abschnitt **„Standard: Userverwaltung nur für Admins“** — Payload-`roles` (`admin` / `contentManagement`) aus Keycloak, Userverwaltung nur für `admin`, Redaktion pflegt alle Inhalte. Nicht pro Projekt neu klären.
 
@@ -24,12 +24,12 @@ Für **jede** öffentliche Basis-URL der App (lokal, Preview, Production) diesel
 |--------|----------------|----------------|
 | 1 | Realm wählen | z. B. `northlight` — **Issuer** notieren: `https://<host>/realms/<realm>` |
 | 2 | Client anlegen (confidential empfohlen) | Client-ID z. B. `brandportal-cms` oder `projektname-cms` |
-| 3 | **Valid redirect URIs** | `ORIGIN/api/auth/oauth2/callback/<providerId>` — **exakt**, kein trailing slash auf dem Callback-Pfad |
+| 3 | **Valid redirect URIs** | `ORIGIN/api/auth/callback/<providerId>` — **exakt**, kein trailing slash auf dem Callback-Pfad (vor `better-auth@1.7`: `ORIGIN/api/auth/oauth2/callback/<providerId>`) |
 | 4 | **Valid post logout redirect URIs** | **Bytegenau** dieselbe URL wie im Code (`LogoutButton` / Website-Logout). Häufig `ORIGIN/admin/login` (Admin nach Logout) **oder** `ORIGIN/admin` / `ORIGIN/` — **beides nicht** whitelisten, wenn der Code nur **eine** Variante sendet. Beispiele nur als Orientierung; maßgeblich ist eure Implementierung. |
 | 5 | Web origins (falls gefragt) | `ORIGIN` oder `+` je nach Keycloak-Version / Policy |
 | 6 | Client authentication | Für confidential: Secret generieren → in `.env` als `KEYCLOAK_*_CLIENT_SECRET` |
 | 7 | App `.env` | `NEXT_PUBLIC_SERVER_URL` = **dieselbe** `ORIGIN` wie im Browser; `KEYCLOAK_ISSUER` = Issuer aus Schritt 1 |
-| — | **providerId / Callback-Segment** | Letztes Segment von `…/oauth2/callback/<providerId>` = **derselbe** String wie in Better Auth (Server + Client), z. B. zentral in `keycloakProviders.ts` gepflegt. **Nicht** automatisch `keycloak` annehmen, wenn ihr den Brandportal-Stil mit eigener CMS-Client-ID (z. B. `brandportal-cms`) nutzt — dann muss überall **dieselbe** ID stehen (Callback, `providerId`, ggf. Logout, siehe unten). |
+| — | **providerId / Callback-Segment** | Letztes Segment von `…/callback/<providerId>` = **derselbe** String wie in Better Auth (Server + Client), z. B. zentral in `keycloakProviders.ts` gepflegt. **Nicht** automatisch `keycloak` annehmen, wenn ihr den Brandportal-Stil mit eigener CMS-Client-ID (z. B. `brandportal-cms`) nutzt — dann muss überall **dieselbe** ID stehen (Callback, `providerId`, ggf. Logout, siehe unten). |
 
 **Wichtig**
 
@@ -58,7 +58,7 @@ Minimaler Ablauf, damit KI und Teams nicht bei Discovery-only, falscher Route od
 
 1. **Auth-Route (Next.js):** **`src/app/api/auth/[...all]/route.ts`** unter dem **Root-**`app`-Baum (**nicht** unter `(payload)`), sofern eure Struktur das zulässt — siehe **Routing-Priorität** unter *Next.js + Payload 3 (Catch-All)*. Handler z. B. `export const GET = auth.handler` und `export const POST = auth.handler` (exakte Export-Form je nach Better-Auth-Version).
 2. **`betterAuth`:** `mongodbAdapter` aus **`better-auth/adapters/mongodb`** mit **`transaction: false`** (gemeinsame MongoDB mit Payload).
-3. **Nicht nur OpenID-Discovery:** feste **`authorizationUrl`**, **`tokenUrl`**, **`userInfoUrl`** (Brandportal-Stil) und explizites **`redirectURI`** = `{siteRoot}/api/auth/oauth2/callback/{KEYCLOAK_CMS_PROVIDER_ID}` — nicht ausschließlich auf Discovery vertrauen, wenn Hostnamen oder Metadaten von eurer erreichbaren URL abweichen.
+3. **Nicht nur OpenID-Discovery:** feste **`authorizationUrl`**, **`tokenUrl`**, **`userInfoUrl`** (Brandportal-Stil) und explizites **`redirectURI`** = `{siteRoot}/api/auth/callback/{KEYCLOAK_CMS_PROVIDER_ID}` (vor `better-auth@1.7`: `…/api/auth/oauth2/callback/…`) — nicht ausschließlich auf Discovery vertrauen, wenn Hostnamen oder Metadaten von eurer erreichbaren URL abweichen.
 4. Hilfsfunktion **`publicSiteRootUrl`** (o. ä.): `NEXT_PUBLIC_SERVER_URL` bereinigen, falls fälschlich **`/api/auth`** o. ä. angehängt ist — sonst stimmen Callback und `baseURL` nicht.
 5. **`emailAndPassword: { enabled: false }`** und **`session.cookieCache.enabled: false`** (nur OAuth, kein paralleler Passwort-/Cache-Pfad).
 6. **`trustedOrigins`:** bereinigtes **`siteRoot`** plus **`http://localhost:3000`** als Fallback fürs lokale Dev.
@@ -605,7 +605,7 @@ Die **Schnellstart-Tabelle** oben ist die Quelle der Wahrheit für neue URLs. Er
 
 1. **Variante A:** zwei Confidential Clients im selben Realm; **Variante B:** ein CMS-Client.
 2. **Valid redirect URIs** müssen **exakt** zu den URIs passieren, die die App sendet:  
-   `ORIGIN/api/auth/oauth2/callback/<providerId>` — **kein** trailing slash auf dem Callback-Pfad. „Invalid parameter: redirect_uri“ → meist Byte-Mismatch mit Keycloak.
+   `ORIGIN/api/auth/callback/<providerId>` (vor `better-auth@1.7`: `ORIGIN/api/auth/oauth2/callback/<providerId>`) — **kein** trailing slash auf dem Callback-Pfad. „Invalid parameter: redirect_uri“ → meist Byte-Mismatch mit Keycloak.
 3. **Post logout redirect URIs** müssen **bytegenau** zu den tatsächlichen `post_logout_redirect_uri`-Werten aus **Website-Logout** und **Admin-LogoutButton** passen — z. B. **`ORIGIN/admin/login`** vs. **`ORIGIN/admin`** sind **nicht** austauschbar; in Keycloak **jede** genutzte Ziel-URL einzeln eintragen (können mehrere Einträge sein).
 4. Debug: `GET /api/auth-redirect-uris` nur in nicht-produktiven Umgebungen.
 
@@ -1230,6 +1230,58 @@ curl -s -i -X POST https://keycloak.northlight.website/realms/northlight/protoco
 denselben `curl` wiederholen. `BETTER_AUTH_URL` o. Ä. hat damit nichts zu tun — die URLs stimmen,
 der Request kommt nur nicht bis Keycloak durch.
 
+## Nachrüsten in einem bestehenden Live-Projekt (Seidemann, Oktober 2026)
+
+Keycloak in ein Projekt eingebaut, das schon live ist und Passwort-User hat. Ergänzt die Abschnitte
+oben um Werte, Umgang mit der bestehenden `users`-Collection und die Reihenfolge der Umstellung.
+
+### Werte für den `northlight`-Realm
+
+| Variable | Wert | Herkunft | dev / prod |
+|---|---|---|---|
+| `KEYCLOAK_ISSUER` | `https://keycloak.northlight.website/realms/northlight` | fest, ohne Slash am Ende | gleich |
+| `KEYCLOAK_CMS_CLIENT_ID` | Client-ID des Projekt-Clients, Empfehlung `<projekt>-cms` (= `providerId`-Default im Code) | Keycloak → Clients | gleich (ein Client, Redirect-URIs für beide Origins) |
+| `KEYCLOAK_CMS_CLIENT_SECRET` | Client-Secret | Keycloak → Client → Tab „Credentials“ (erscheint nur mit „Client authentication“ an) | gleich |
+| `KEYCLOAK_CMS_REQUIRED_ROLE` | Name der Redaktionsrolle | beim Anlegen der Rolle selbst festgelegt | gleich |
+| `BETTER_AUTH_SECRET` | `openssl rand -base64 32` | selbst erzeugen | **verschieden** |
+
+Keycloak greift in einem Environment, sobald Issuer, Client-ID, Client-Secret und
+`BETTER_AUTH_SECRET` gesetzt sind. Ohne `KEYCLOAK_CMS_REQUIRED_ROLE` kommt danach nur `admin` ins
+CMS.
+
+### `users`-Collection ergänzen, nicht ersetzen
+
+Die Keycloak-Teile (`auth.strategies`, `disableLocalStrategy`, Felder `roles` / `keycloakRoles` /
+`betterAuthUserId` / Keycloak-Passwortlink, `access`, `admin.hidden`) **in die bestehende
+Collection einfügen** — nicht die Datei aus einem Referenzprojekt darüberkopieren. Projektspezifische
+Einstellungen bleiben sonst still auf der Strecke. Bei Seidemann standen dort `tokenExpiration`,
+`maxLoginAttempts` und `lockTime`, die die Referenzprojekte nicht haben.
+
+### Reihenfolge der Umstellung auf der Live-Seite
+
+1. **Code deployen, ohne Keycloak-Werte in Dokploy.** Am Login ändert sich nichts, der
+   Passwort-Login bleibt. Sichtbar neu sind nur der Text über dem Login-Formular und der
+   Logout-Button.
+2. **Keycloak-Client:** Redirect-URI `https://<live-domain>/api/auth/callback/<providerId>` und
+   Post-Logout-URI `https://<live-domain>/admin/login` eintragen — lokal getestet sind sonst nur die
+   `localhost`-Einträge.
+3. **Cloudflare prüfen:** den `curl` aus **„Befunde aus tarretory“** auf dem Application-Server
+   ausführen. `403` mit `server: cloudflare` → IP-Access-Rule fehlt, Login auf der Live-Seite
+   scheitert.
+4. **Redaktion vorbereiten:** Jede Person, die Inhalte pflegt, braucht ein Keycloak-Konto mit
+   **derselben E-Mail** wie ihr bestehender Payload-User und die Redaktionsrolle. Ab der Umstellung
+   gibt es kein Passwortformular mehr; bestehende User werden über die E-Mail zugeordnet.
+5. **Werte in Dokploy setzen** (prod-Werte aus Infisical, eigener `BETTER_AUTH_SECRET`), neu
+   deployen, einmal live einloggen.
+
+→ **Lokal testen schreibt in die Datenbank, auf die `dev` zeigt.** Ein Login legt Better Auths
+Collections (`user`, `session`, `account`) und den Payload-User an. Zeigt `dev` auf die
+Live-Datenbank, landen sie dort.
+
+→ **Typen und Importmap ohne Datenbank erzeugen:** Die Payload-CLI lädt zusätzlich eine lokale
+`.env`. Mit `DATABASE_URL=mongodb://127.0.0.1:1/none pnpm exec payload generate:types` (bzw.
+`generate:importmap`) ist sicher, dass keine echte Datenbank erreicht wird.
+
 ## Sicherheit (Kurz)
 
 - Wer den CMS-Client in Keycloak nutzen darf = wer ins Admin kann (bei Variante B zusätzlich Payload-`access`/Rollen beachten). Ergänzend: **Client-Rollen** (drei Stufen) für **`users`** wie oben.
@@ -1251,7 +1303,7 @@ der Request kommt nur nicht bis Keycloak durch.
 Implementiere Keycloak-Login fürs Payload-Admin nach morgendigital/payload-skills keycloak/description.md,
 Variante B (Brandportal-Referenz / Golden Path): Better Auth + genericOAuth, eine MongoDB,
 Route src/app/api/auth/[...all]/route.ts mit auth.handler (GET/POST), mongodbAdapter transaction: false,
-manuelle Keycloak-OIDC-URLs + explizites redirectURI = {siteRoot}/api/auth/oauth2/callback/<providerId>,
+manuelle Keycloak-OIDC-URLs + explizites redirectURI = {siteRoot}/api/auth/callback/<providerId>,
 KEYCLOAK_CMS_PROVIDER_ID serverseitig und NEXT_PUBLIC_KEYCLOAK_CMS_PROVIDER_ID im BeforeLogin-Client,
 publicSiteRootUrl falls NEXT_PUBLIC_SERVER_URL fehlerhaft, emailAndPassword disabled + session.cookieCache disabled,
 trustedOrigins siteRoot + http://localhost:3000, Payload users mit disableLocalStrategy enableFields/optionalPassword,
@@ -1261,7 +1313,7 @@ src/access/roles.ts (isAdmin inkl. local-jwt, adminOnly, adminOrSelf), users: re
 adminOnly, admin.hidden für Nicht-Admins; Rollenname der Redaktion kommt aus KEYCLOAK_CMS_REQUIRED_ROLE — nicht erfragen.
 Rollen in der Strategy nicht aus session.user, sondern per getCurrentKeycloakRoles (Token-Refresh bei Ablauf,
 bei Ablehnung deleteUserSessions) — siehe „Neue Befunde aus dankl“.
-Keycloak: Valid redirect URIs = ORIGIN/api/auth/oauth2/callback/<providerId>; Post-Logout-URIs bytegenau wie LogoutButton.
+Keycloak: Valid redirect URIs = ORIGIN/api/auth/callback/<providerId>; Post-Logout-URIs bytegenau wie LogoutButton.
 ```
 
 Kurzform im Team-Chat: *„Keycloak wie Playbook **Variante B / Golden Path** in payload-skills `keycloak/description.md`.“*

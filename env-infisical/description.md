@@ -252,12 +252,73 @@ Kein Fehler, kein Log. In Dokploy deshalb bei beiden Feldern eintragen.
 1. Infisical-Projekt anlegen, `infisical init` im Repo — die entstehende
    `.infisical.json` enthält nur die Workspace-ID und **gehört ins Repo**.
 2. `check-env.mjs` nach `scripts/` kopieren, `check:env` in die `package.json`.
-3. `pnpm check:env` laufen lassen. Die Ausgabe ist die Liste, die man beim Kunden
+   Bestandsprojekt: Katalog anpassen, siehe
+   [Bestandsprojekte](#bestandsprojekte-katalog-anpassen-code-nicht-umbenennen).
+3. Skripte an Infisical anbinden, siehe
+   [Skripte an Infisical anbinden](#skripte-an-infisical-anbinden).
+4. `pnpm check:env` laufen lassen. Die Ausgabe ist die Liste, die man beim Kunden
    anfragt — vollständig, in einer Runde.
-4. Alles mit „selbst erzeugen" sofort setzen, nicht auf den Kunden warten.
-5. `.env.example` mit denselben Namen füllen, ohne Werte.
-6. Vor dem Go-live nochmal, zusammen mit
+5. Alles mit „selbst erzeugen" sofort setzen, nicht auf den Kunden warten.
+6. `.env.example` mit denselben Namen füllen, ohne Werte.
+7. Vor dem Go-live nochmal, zusammen mit
    [go-live-check](../go-live-check/description.md). Exit 1 ist ein Blocker.
+
+## Skripte an Infisical anbinden
+
+Ohne diesen Schritt ist Infisical nur ein Ablageort: `pnpm dev` liest weiter die
+lokale `.env`, und niemand merkt, wenn sie veraltet. Vorlage ist
+`payload-northlight-template` (`package.json`, `vitest.setup.ts`, `.gitignore`,
+`scripts/setup.ts`, README-Abschnitte „Environment variables“ und „Scripts“).
+
+**Lokale Skripte bekommen `infisical run --env=dev --` vorangestellt:**
+
+```jsonc
+"dev": "infisical run --env=dev -- cross-env NODE_OPTIONS=--no-deprecation next dev",
+"dev:prod": "rm -rf .next && infisical run --env=dev -- sh -c \"pnpm build && pnpm start\"",
+"build:dev": "infisical run --env=dev -- pnpm build",
+"payload:dev": "infisical run --env=dev -- pnpm payload",
+"analyze": "infisical run --env=dev -- …",
+"generate:importmap": "infisical run --env=dev -- …",
+"generate:types": "infisical run --env=dev -- …",
+"test:int": "infisical run --env=dev -- …",
+"test:e2e": "infisical run --env=dev -- …"
+```
+
+**Skripte, die Dokploy ausführt, bleiben ohne Infisical** — auf dem Server gibt es
+keine Infisical-CLI: `build`, `start`, `payload`, `build:no-db`. Für lokale Aufrufe
+gibt es dafür die `:dev`-Varianten (`build:dev`, `payload:dev`).
+
+**Dazu:**
+
+- `import 'dotenv/config'` aus `vitest.setup.ts` und `playwright.config.ts`
+  entfernen — die Tests bekommen die Werte über `pnpm test:int` / `test:e2e`.
+  Bleibt der Import, lesen sie still die alte `.env`.
+- `.gitignore`: `.env*` plus `!.env.example` statt nur `.env`.
+- `scripts/setup.ts` aus dem Template: prüft CLI und `.infisical.json` und ruft
+  `check:env` auf, statt eine `.env` anzulegen.
+- README: Voraussetzung Infisical-CLI (`infisical login`), Abschnitte
+  „Environment variables“ und „Scripts“ mit der Spalte „wo läuft es“ (lokal /
+  Dokploy).
+
+## Bestandsprojekte: Katalog anpassen, Code nicht umbenennen
+
+Der Katalog in `check-env.mjs` nennt die Variablen so, wie neue Projekte sie
+heißen (`EMAIL_FROM_ADDRESS`, `EMAIL_NOTIFY_TO`, …), und erwartet sie, sobald das
+passende Paket installiert ist. Ein Bestandsprojekt liest oft andere Namen oder
+hat das Feature nicht. Dann meldet das Skript Variablen als FEHLT, die das
+Projekt gar nicht braucht.
+
+→ **Die Kopie des Katalogs im Projekt anpassen, nie die Variablen im Code
+umbenennen.** In Dokploy und Infisical stehen die Werte unter den alten Namen;
+nach einer Umbenennung findet die Live-Seite nach dem nächsten Deploy nichts mehr.
+Gemessen an Seidemann (13.10.2026): Code las `EMAIL_FROM` und
+`CONTACT_NOTIFICATION_TO` — umbenannt hätten die Kontaktformular-Mails auf der
+Live-Seite aufgehört.
+
+→ **Pflicht ist, was ohne Wert nicht funktioniert.** Variablen mit Fallback im
+Code (`process.env.S3_REGION || 'us-east-1'`) oder ohne Code-Bezug in der
+Projektkopie auf `optional: true` setzen. Das Skript selbst kennt keine
+Fallbacks — jeder `process.env`-Zugriff ohne Katalogeintrag gilt als Pflicht.
 
 ## Lokal arbeiten
 
@@ -265,6 +326,8 @@ Kein Fehler, kein Log. In Dokploy deshalb bei beiden Feldern eintragen.
 infisical run --env=dev -- pnpm dev
 infisical run --env=dev -- pnpm build
 ```
+
+Sind die Skripte angebunden (siehe oben), reichen `pnpm dev` und `pnpm build:dev`.
 
 Eine lokale `.env` ist möglich (`infisical export --env=dev > .env`), veraltet
 aber still. Wo beides existiert, gewinnen die Werte aus `infisical run` — weder

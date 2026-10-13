@@ -93,7 +93,11 @@ const KATALOG = [
   {
     key: 'EMAIL_NOTIFY_TO',
     quelle: 'extern',
-    wenn: () => hat('resend') || hat('nodemailer'),
+    wenn: () =>
+      hat('resend') ||
+      hat('@payloadcms/email-resend') ||
+      hat('nodemailer') ||
+      hat('@payloadcms/email-nodemailer'),
     proEnv: true,
     hinweis: 'Testumgebungen auf @northlight.at, nie auf das Kundenpostfach',
   },
