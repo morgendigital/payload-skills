@@ -54,8 +54,18 @@ pnpm add @ip-location-db/dbip-country   # optional, siehe §4 (Land des Besucher
 - `NODE_AUTH_TOKEN` = **Token (classic)** des Kontos `morgendigital` mit `read:packages`.
   Fine-grained-Tokens funktionieren mit GitHub Packages nicht. Lokal in der Shell bzw. `.env`, in
   Dokploy als Umgebungsvariable, die **beim Build** verfügbar ist — sonst scheitert schon
-  `pnpm install`. Den Wert in Infisical führen (siehe [env-infisical](../env-infisical/description.md)),
-  nie die `.npmrc` mit Klartext-Token committen.
+  `pnpm install`. Nie die `.npmrc` mit Klartext-Token committen.
+- **Der Token liegt in Infisical, Projekt „NL-Intern", Secret `GITHUB-PACKAGE-TOKEN`.** Dort holen,
+  nicht pro Kundenprojekt neu anlegen (das Konto `morgendigital` hat dafür einen gemeinsamen Lese-Token) und nie in
+  Chat oder Ticket schreiben. Er ist nur zum Lesen — Veröffentlichen kann allein die Action im
+  geo-tool-ai-Repo mit dem Secret `MORGENDIGITAL_PACKAGES_TOKEN` (`write:packages`).
+- **Lockfile mit Token erzeugen und committen:** `NODE_AUTH_TOKEN=… pnpm install`, dann
+  `pnpm-lock.yaml` einchecken. Ohne den Eintrag bricht der Build mit `--frozen-lockfile` ab. Ohne
+  gesetzte Variable warnt pnpm lokal nur (`Failed to replace env in config`), das ist harmlos, wenn das
+  Paket schon installiert ist.
+- **Docker:** `.npmrc` in der deps-Stage mitkopieren (`COPY package.json pnpm-workspace.yaml .npmrc …`)
+  und dort `ARG NODE_AUTH_TOKEN` setzen — nur in dieser Stage, damit der Token nicht im fertigen Image
+  landet. In Dokploy als **Build-Argument** eintragen (bei Nixpacks als Umgebungsvariable).
 - Peer-Dependencies: `payload ^3.80.0`, optional `@ip-location-db/dbip-country >=2`. Node ≥ 20.9.
 - Nur ESM-Exporte: `@morgendigital/payload-geo`, `/helpers`, `/proxy`, `/client`.
 
@@ -347,13 +357,19 @@ die Zählung bleibt im Puffer und wird jede Minute erneut versucht.
   nicht gibt.
 - **Schlüssel unter 32 Zeichen** schaltet die Schnittstelle ab (`503`), obwohl das Tool Schlüssel ab
   16 Zeichen annimmt. Immer `openssl rand -hex 32` (64 Zeichen).
+- **`middleware.ts` statt `proxy.ts`:** In Next 16 läuft `middleware` auf Edge. Die Zählung aus §4 liegt im
+  Speicher des Prozesses und wird von Payload in die DB geschrieben — das klappt nur, wenn der Proxy im
+  **Node-Prozess** läuft. Datei in `src/proxy.ts` umbenennen, Export `proxy`.
+- **Erster Zählungstest gegen die Prod-DB:** Der lokale Dev-Server schreibt Tagessummen in die echte
+  `geo-stats`. Mit einer eigenen Test-DB prüfen oder erst nach dem Deploy.
 - **`NODE_AUTH_TOKEN` fehlt beim Build** → `pnpm install` scheitert mit 401/404 aus
   `npm.pkg.github.com`, nicht erst zur Laufzeit.
 
 ## Checkliste: neue Kundenseite anbinden
 
 1. `.npmrc` mit `@morgendigital`-Registry, `NODE_AUTH_TOKEN` (classic, `read:packages`) lokal und in
-   Dokploy als Build-Env, Wert in Infisical
+   Dokploy als Build-Arg; Wert aus Infisical „NL-Intern" → `GITHUB-PACKAGE-TOKEN`; Dockerfile: `.npmrc`
+   kopieren + `ARG NODE_AUTH_TOKEN`; Lockfile committen
 2. `pnpm add @morgendigital/payload-geo` (neueste **veröffentlichte** Version, §0), optional
    `@ip-location-db/dbip-country`
 3. `geoToolPlugin({ collections, onSettingsChange, publicUrl? })`, Drafts in allen `collections`
