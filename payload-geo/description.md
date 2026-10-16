@@ -24,12 +24,11 @@ Pilot war Karlingerhof.
 | 0.1.0 | **nie veröffentlicht** (nur Pilot) | Global `geo-settings`, Collection `geo-changes`, `/api/geo/*` | — |
 | 0.2.0 | veröffentlicht 04.10.2026 | Collection `geo-stats`, `geoTrack`, `/api/geo/collect` + `/stats`, `captureAiSource`, `geoInquiryHook` | **ja** — Erstinstallation: `geo-settings`, `geo-changes`, `geo-stats` |
 | 0.2.1 | veröffentlicht 04.10.2026 | `geoTrack` zählt im Prozess statt per HTTP auf die eigene Domain | nein |
-| 0.3.0 | veröffentlicht 05.10.2026 — **aktuell neueste** | Land des Besuchers (`geo-stats.country`) | **ja** — neues Feld `country` |
-| 0.4.0 | **unveröffentlicht** (nur im Repo) | Buchungsklicks (`trackBookingClicks`, `POST /api/geo/beacon`), `bookingPages`, FAQ-Einspielen (`faqField`) | **ja** — `geo-stats.kind` bekommt `booking-click` |
+| 0.3.0 | veröffentlicht 05.10.2026 | Land des Besuchers (`geo-stats.country`) | **ja** — neues Feld `country` |
+| 0.4.0 | veröffentlicht 15.10.2026 | Buchungsklicks (`trackBookingClicks`, `POST /api/geo/beacon`), `bookingPages`, FAQ-Einspielen (`faqField`); Meta/FAQ verweigert ohne Drafts (`drafts-required`), einsprachige Seiten im Manifest, `503` mit `code: 'api-disabled'` | **ja** — `geo-stats.kind` bekommt `booking-click` |
+| 0.4.1 | veröffentlicht 16.10.2026 — **aktuell neueste** | Länder-Datenbank `@ip-location-db/geo-whois-asn-country` (CC0) statt der deprecated `dbip-country` (wird weiter gelesen, falls installiert) | nein |
 
-→ Alles aus 0.4.0 — Abschnitt [5](#5-klicks-zur-buchung-ab-040--noch-nicht-veröffentlicht) und
-`faqField` — gibt es aus der Registry **noch nicht**. Vor dem Einbau mit
-`pnpm view @morgendigital/payload-geo versions` prüfen, was tatsächlich verfügbar ist.
+→ Vor dem Einbau mit `pnpm view @morgendigital/payload-geo versions` prüfen, was verfügbar ist.
 
 → **0.3.0 meldet sich im Manifest als `0.2.1`** (`PLUGIN_VERSION` wurde nicht mit angehoben, erst
 0.4.0 korrigiert das). Wer im Tool oder per `curl` die Version einer Seite prüft: `features` im
@@ -48,7 +47,7 @@ Konto `morgendigital`). In der Kundenseite:
 
 ```bash
 pnpm add @morgendigital/payload-geo
-pnpm add @ip-location-db/dbip-country   # optional, siehe §4 (Land des Besuchers)
+pnpm add @ip-location-db/geo-whois-asn-country   # optional, siehe §4 (Land des Besuchers)
 ```
 
 - `NODE_AUTH_TOKEN` = **Token (classic)** des Kontos `morgendigital` mit `read:packages`.
@@ -56,7 +55,7 @@ pnpm add @ip-location-db/dbip-country   # optional, siehe §4 (Land des Besucher
   Dokploy als Umgebungsvariable, die **beim Build** verfügbar ist — sonst scheitert schon
   `pnpm install`. Den Wert in Infisical führen (siehe [env-infisical](../env-infisical/description.md)),
   nie die `.npmrc` mit Klartext-Token committen.
-- Peer-Dependencies: `payload ^3.80.0`, optional `@ip-location-db/dbip-country >=2`. Node ≥ 20.9.
+- Peer-Dependencies: `payload ^3.80.0`, optional `@ip-location-db/geo-whois-asn-country >=2` (ab 0.4.1) bzw. `@ip-location-db/dbip-country >=2`. Node ≥ 20.9.
 - Nur ESM-Exporte: `@morgendigital/payload-geo`, `/helpers`, `/proxy`, `/client`.
 
 ## 2. Einbau in die Payload-Config
@@ -234,7 +233,10 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
 
 **Land des Besuchers** (ab 0.3.0, nie bei Bots): aus `cf-ipcountry`, `x-vercel-ip-country`,
 `cloudfront-viewer-country`, `x-country-code` oder `x-geoip-country`; ohne Header optional aus
-`@ip-location-db/dbip-country` (≈ 67 MB im Image, nur Node-Runtime). Ohne beides bleibt das Land leer.
+`@ip-location-db/geo-whois-asn-country` (ab 0.4.1, ≈ 49 MB im Image, CC0, nur Node-Runtime). Ohne beides bleibt
+das Land leer. Das frühere `@ip-location-db/dbip-country` ist auf npm **deprecated**; 0.4.1 liest es weiter, wenn es
+installiert ist, die neue Datenbank hat aber Vorrang. Beim Umstieg das alte Paket entfernen und bei Standalone-Builds
+`outputFileTracingIncludes` auf `node_modules/@ip-location-db/geo-whois-asn-country/*-num.csv` umstellen.
 
 **Anfragen zuordnen** braucht Speicherung im Browser und damit Einwilligung:
 
@@ -267,7 +269,7 @@ der Kundenseite). Ohne Einwilligung zählt die Anfrage als `unknown` — „Anfr
 eine Untergrenze. Das dem Kunden vorab sagen, zusammen mit der Referrer-Lücke aus
 [geo §8](../geo/description.md#8-messung--und-warum-die-zahlen-nie-stimmen).
 
-## 5. Klicks zur Buchung (ab 0.4.0 — noch nicht veröffentlicht)
+## 5. Klicks zur Buchung (ab 0.4.0)
 
 ```tsx
 'use client'
@@ -324,10 +326,10 @@ die Zählung bleibt im Puffer und wird jede Minute erneut versucht.
 | `geoTrack` (Besuche, Bot-Abrufe) | nein | Tagessumme: Datum, Quelle, Seite, Land — keine IP, keine Cookies |
 | Buchungsklick mit Herkunft der aktuellen Seite bzw. `geo_src` | nein | Tagessumme wie oben |
 | `captureAiSource` (sessionStorage, Herkunft über mehrere Seiten) | **ja** — Kategorie Statistik/Messung im Cookie-Banner ([tracking](../tracking/description.md)) | Quelle im `sessionStorage` des Browsers |
-| Land aus IP über DB-IP | nein | nur das Land; die IP wird nur im Speicher nachgeschlagen |
+| Land aus IP (Länder-Datenbank) | nein | nur das Land; die IP wird nur im Speicher nachgeschlagen |
 
-- Mit `@ip-location-db/dbip-country`: Lizenz **CC BY 4.0** — in der Datenschutzerklärung
-  „IP Geolocation by DB-IP" mit Link auf https://db-ip.com nennen.
+- `geo-whois-asn-country` ist CC0 — keine Namensnennung nötig. Nur wer noch `@ip-location-db/dbip-country`
+  nutzt (CC BY 4.0), muss „IP Geolocation by DB-IP" mit Link auf https://db-ip.com nennen.
 - Das Rate-Limit des Beacons hält IPs bis zu einer Minute im Speicher, nie in der DB.
 - In der Datenschutzerklärung den Zweck (Messung der Sichtbarkeit in KI-Suchen) und die
   Übermittlung der Tagessummen an das GEO-Tool aufnehmen — Abgleich wie in
@@ -355,7 +357,7 @@ die Zählung bleibt im Puffer und wird jede Minute erneut versucht.
 1. `.npmrc` mit `@morgendigital`-Registry, `NODE_AUTH_TOKEN` (classic, `read:packages`) lokal und in
    Dokploy als Build-Env, Wert in Infisical
 2. `pnpm add @morgendigital/payload-geo` (neueste **veröffentlichte** Version, §0), optional
-   `@ip-location-db/dbip-country`
+   `@ip-location-db/geo-whois-asn-country`
 3. `geoToolPlugin({ collections, onSettingsChange, publicUrl? })`, Drafts in allen `collections`
 4. `pnpm generate:types`, `pnpm generate:importmap`, `pnpm payload migrate:create`, Migration lesen
 5. robots.txt-Route mit `buildRobotsTxt`, `generateRobotsTxt: false`, `public/robots.txt` löschen
