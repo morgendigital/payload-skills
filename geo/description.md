@@ -137,9 +137,8 @@ Monetarisierungs-Entscheidung des Kunden, kein Default.
   strukturierte Daten gepflegt werden (Booking, HolidayCheck, Google-Unternehmensprofil) —
   deduplizieren und die Pfad-Prüfung aus frechinger auf beide anwenden.
 - Umgesetzt im Paket `@morgendigital/payload-geo` (Global „KI & SEO", Helfer `buildRobotsTxt`
-  und `applyBusinessSettings`). Das Paket öffnet außerdem eine per Schlüssel geschützte
-  Schnittstelle für das interne GEO-Tool: Alt-Texte und strukturierte Daten gehen nach Freigabe
-  live, Meta-Texte nur als **Entwurf** (`draft: true`) — veröffentlicht wird im CMS.
+  und `applyBusinessSettings`, Schnittstelle zum GEO-Tool) — Einbau, Versionen und Migrationen
+  siehe [payload-geo](../payload-geo/description.md).
 
 ## 2. Content Signals Policy — die Entscheidung, die der Kunde treffen muss
 
