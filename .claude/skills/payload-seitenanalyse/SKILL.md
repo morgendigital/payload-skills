@@ -79,3 +79,15 @@ gemeinsame Datei einmalig vorbereitet.
 Im Umsetzungsplan einen Abschnitt "Merge-Strategie" führen: welche Tickets
 parallel laufen können, welche nacheinander müssen, und welche gemeinsamen
 Dateien der Grund dafür sind.
+
+### Generierte Dateien bei echten Rebase-Konflikten
+
+Konflikte in generierten Dateien nie manuell auflösen — der Build bleibt
+grün, aber die Typen passen dann still nicht mehr zum Schema. Stattdessen:
+Konflikt auf einer Seite auflösen (`git checkout --ours <datei>` reicht),
+danach den Generator laufen lassen und das Ergebnis committen. Für Payload
+konkret: `payload-types.ts` per `pnpm generate:types`.
+
+Gegenstück: handgeschriebene Konventionsdateien wie `CLAUDE.md` sammeln
+unabhängige Einträge verschiedener Tickets — dort im Zweifel beide Seiten
+behalten statt eine zu verwerfen.
