@@ -104,14 +104,22 @@ HTTP von `MEDIA_SOURCE` (Default `NEXT_PUBLIC_SERVER_URL`).
 
 Vier Entscheidungen im Skript, die nicht zufällig sind:
 
-**1. `payload.db.updateOne`, nicht `payload.update`.** `payload.update` setzt `updatedAt` neu — und
-wenn `updatedAt` als Cache-Buster in die imgproxy-URL geht
+**1. `payload.db.updateOne` mit `updatedAt: null`, nicht `payload.update`.** `payload.update` setzt
+`updatedAt` neu — und wenn `updatedAt` als Cache-Buster in die imgproxy-URL geht
 ([image-optimization](../image-optimization/description.md)), kodiert imgproxy danach **jedes**
 angefasste Bild neu, und das CDN verfehlt einmal komplett. Außerdem liefen die Media-Hooks samt
-Revalidierung der ganzen Seite. `db.updateOne` schreibt nur das Feld. Am Quelltext von
-`@payloadcms/db-mongodb` 3.92.1 gelesen: `timestamps: false` in den Mongoose-Optionen, „timestamps
-are manually added by the write transform" — `updatedAt` bleibt unangetastet. **Bei SQL-Adaptern
-nicht geprüft** — dort vor dem Vollauf an einem Dokument nachsehen, ob sich `updatedAt` ändert.
+Revalidierung der ganzen Seite. `db.updateOne` umgeht Hooks und Revalidierung, setzt `updatedAt`
+aber **trotzdem** auf „jetzt“, wenn man es nicht angibt: der Mongo-Adapter (3.92.1) ergänzt es im
+Write-Transform (`utilities/transform.js`: `if (typeof data.updatedAt === 'undefined') …`).
+Ausdrücklich `updatedAt: null` mitgeben — das heißt „nicht anfassen“.
+
+> **Das stand hier zuerst falsch.** Die erste Fassung behauptete nach dem Lesen des Adapters
+> („Timestamps are manually added by the write transform“), `db.updateOne` lasse `updatedAt`
+> in Ruhe. Es heißt das Gegenteil: der Adapter setzt es *selbst*. Am echten Dokument gemessen:
+> ohne `null` sprang `updatedAt` von `2026-11-12T12:04:01.661Z` auf `2026-11-20T07:53:08.972Z`,
+> mit `null` blieb es stehen. Die Probe an **einem** Dokument mit `FORCE=1` vor dem Vollauf ist
+> deshalb Pflicht, nicht Kür — `updatedAt` davor und danach vergleichen. Bei SQL-Adaptern nicht
+> geprüft.
 
 **2. Die 300-px-`thumbnail`-Variante als Quelle, nicht das Original.** Das Ergebnis ist ein 16-px-Bild;
 das Original ist bis zu 4096 px breit. Der Unterschied ist der Download (~8 KB statt mehrere
@@ -193,5 +201,5 @@ neu laden — jedes Foto muss in **seinen eigenen** Farben erscheinen, nicht in 
 | Blur erzeugen | `hooks/generateBlurDataURL.ts` | `beforeChange` auf `media`, `req.file.data` → sharp 16 px WebP |
 | Blur speichern | `Media.ts` | Feld `blurDataURL`, `type: 'text'`, `hidden` |
 | Blur anzeigen | `ImageMedia` | `placeholder="blur"` + `blurDataURL={resource.blurDataURL}` |
-| Bestand nachrüsten | `src/scripts/backfillBlurDataURLs.ts` | `APPLY=1`, `payload.db.updateOne`, Thumbnail als Quelle |
-| Nicht tun | — | `payload.update` im Backfill (bumpt `updatedAt` → imgproxy-Cache), `where`-Filter beim Paging |
+| Bestand nachrüsten | `src/scripts/backfillBlurDataURLs.ts` | `APPLY=1`, `payload.db.updateOne` + `updatedAt: null`, Thumbnail als Quelle |
+| Nicht tun | — | `payload.update` im Backfill; `db.updateOne` **ohne** `updatedAt: null` (bumpt `updatedAt` → imgproxy-Cache); `where`-Filter beim Paging |

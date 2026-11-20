@@ -17,10 +17,12 @@
  * original (up to 4096px): the result is a 16px blur either way, the download ~8 KB instead of
  * several hundred.
  *
- * Written with `payload.db.updateOne`, NOT `payload.update`: update bumps `updatedAt` (which is
- * the imgproxy / CDN cache buster — every touched image would be re-encoded once) and runs the
- * media hooks and their revalidation. The Mongo adapter leaves `updatedAt` alone on db.updateOne;
- * other adapters: check before relying on it.
+ * Written with `payload.db.updateOne` and `updatedAt: null`, NOT `payload.update`: `updatedAt` is
+ * the imgproxy / CDN cache buster, so a bumped value makes that image re-encode and miss the CDN
+ * once. `payload.update` bumps it and also runs the media hooks and their revalidation.
+ * `db.updateOne` bumps it too unless `updatedAt` is passed explicitly — `null` means "don't touch"
+ * (db-mongodb utilities/transform.js). Checked on a real document: without `null` it moved
+ * (12.11. → 20.11.), with it it stayed. Other adapters: check before the full run.
  *
  * Gentle on purpose (see media-webp-variants): paged, one file at a time, sharp on two threads,
  * a short pause between documents.
@@ -122,7 +124,8 @@ pages: for (let page = 1; ; page++) {
         await payload.db.updateOne({
           collection: 'media',
           id: doc.id,
-          data: { blurDataURL: blur },
+          // `updatedAt: null` = leave it alone; without it the adapter sets it to now.
+          data: { blurDataURL: blur, updatedAt: null },
           returning: false,
         })
         written++

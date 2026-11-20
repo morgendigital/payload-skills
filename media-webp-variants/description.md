@@ -216,8 +216,8 @@ es voll.
 
 Dasselbe Muster (Hook beim Upload + Skript für den Bestand, gedrosselt) für den unscharfen
 Ladeplatzhalter: [media-blur-placeholder](../media-blur-placeholder/description.md). Der Backfill
-dort schreibt mit `payload.db.updateOne`, damit `updatedAt` — der imgproxy-Cache-Buster — unberührt
-bleibt; der Reparaturlauf oben bumpt es dagegen durch `payload.update`, was hier gewollt ist.
+dort schreibt mit `payload.db.updateOne` und `updatedAt: null`, damit `updatedAt` — der imgproxy-Cache-Buster —
+unberührt bleibt; der Reparaturlauf oben bumpt es dagegen durch `payload.update`, was hier gewollt ist.
 
 ## Verwandt: `sizes` an `next/image`
 
