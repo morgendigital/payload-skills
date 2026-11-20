@@ -181,6 +181,99 @@ plus Canvas. Der Platzhalter erscheint dann erst nach der Hydration, genau dann,
 wenigsten braucht. Die WebP-Data-URL steht ohne JavaScript im HTML. Für 40 gesparte Byte nicht
 getauscht.
 
+## Externe Bilder ohne Media-Dokument (Justimmo, CDN-URLs)
+
+Der Hook oben setzt das Feld beim Upload — das setzt ein Media-Dokument voraus. Kommen Bilder als
+**URL aus einer externen API** (Immobilien aus Justimmo, Produktfotos aus einem Shop-System), gibt es
+kein Dokument, auf dem `blurDataURL` stehen könnte. `next/image` mit `placeholder="blur"` und
+Konstante zeigt dann wieder dasselbe Grau für alle Fotos — oder, ohne `blurDataURL`, gar nichts.
+
+**Lösung:** dieselbe `makeBlurDataURL` läuft auf dem **Server beim Rendern**, das Ergebnis liegt im
+Next.js-Datencache. Der Cache-Key ist die Bild-URL; ändert sich das Bild, ändert sich meist die URL
+(bei Justimmo steckt ein Hash im Pfad), also ist ein langer Cache sicher und die Arbeit fällt **einmal
+pro Bild** an, nicht einmal pro Seitenaufruf.
+
+```ts
+// src/lib/<quelle>/blur.ts
+import { unstable_cache } from 'next/cache'
+
+import { makeBlurDataURL } from '@/utilities/makeBlurDataURL'
+
+const CACHE_SECONDS = 60 * 60 * 24 * 7
+
+/** Dieselben Hosts wie `images.remotePatterns` in next.config.ts — sonst nichts laden. */
+export const isAllowedImageUrl = (value: string): boolean => {
+  try {
+    const { hostname, protocol } = new URL(value)
+    return protocol === 'https:' && (hostname.endsWith('.justimmo.at') || hostname.endsWith('.justimmo.net'))
+  } catch {
+    return false
+  }
+}
+
+const readBlur = unstable_cache(
+  async (url: string): Promise<null | string> => {
+    const response = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    // Werfen statt null zurückgeben: ein fehlgeschlagener Download kommt so nicht in den Cache.
+    if (!response.ok) throw new Error(`fetch ${response.status}`)
+
+    return makeBlurDataURL(
+      Buffer.from(await response.arrayBuffer()),
+      response.headers.get('content-type')?.split(';')[0],
+    )
+  },
+  ['<quelle>-blur'],
+  { revalidate: CACHE_SECONDS },
+)
+
+export async function blurFor(url: string): Promise<string | undefined> {
+  if (!isAllowedImageUrl(url)) return undefined
+  try {
+    return (await readBlur(url)) ?? undefined
+  } catch {
+    return undefined // kein Blur ist besser als eine kaputte Seite
+  }
+}
+```
+
+Das Ergebnis hängt man beim **Mappen der API-Daten** an jedes Bild (`Promise.all` über alle Bilder
+einer Seite) und reicht es der Komponente durch:
+
+```tsx
+<NextImage
+  blurDataURL={image.blurDataURL}
+  placeholder={image.blurDataURL ? 'blur' : 'empty'}
+  …
+/>
+```
+
+Drei Entscheidungen, die nicht zufällig sind:
+
+**1. Host-Allowlist vor dem Fetch.** Die URL stammt aus einer fremden API-Antwort, der Server ruft
+sie auf. Ohne Prüfung ist das ein SSRF-Einfallstor (interne Adressen, Metadaten-Endpunkte). Die Liste
+ist dieselbe wie `images.remotePatterns` — was `next/image` nicht ausliefern darf, lädt auch der Blur
+nicht. Mit Tests absichern: `https://justimmo.at.evil.com`, `http://…` und `169.254.169.254` müssen
+`false` liefern.
+
+**2. Kleinere Bildgröße als Quelle, nicht die Anzeigegröße.** Das Ergebnis ist ein 16-px-Bild. Bieten
+API oder CDN mehrere Größen an, die mittlere lesen (Justimmo: `medium`, 630 px, statt `fullhd`,
+1920 px) — das Seitenverhältnis muss stimmen, also **keine zugeschnittene** Größe (`small` ist bei
+Justimmo ein 100×300-Crop). Fehlt sie, fällt es auf die Anzeige-URL zurück.
+
+**3. Fehler werfen, nicht cachen.** `unstable_cache` speichert, was die Funktion zurückgibt. Ein
+`null` bei einem Timeout stünde danach eine Woche im Cache. Geworfene Fehler werden nicht gespeichert
+und beim nächsten Rendern erneut versucht. `null` aus `makeBlurDataURL` selbst (transparent,
+unlesbar) ist dagegen ein echtes Ergebnis und darf gecacht werden.
+
+**Gemessen** (Next 16, Dev-Server, Seite mit 15 Bildern, davon Hero, neun Galeriebilder, Grundriss
+und drei Karten): erster Aufruf mit leerem Cache 5,9 s (Seitenrender inklusive der API-Abrufe),
+zweiter Aufruf 54 ms; alle 15 `<img>` tragen den Blur im HTML. Ein Produktions-Build wurde nicht
+gemessen — die Zahl zeigt nur, dass der Cache greift und die Arbeit nicht pro Aufruf wiederkehrt.
+
+Nicht getestet: wie sich der Datencache bei **mehreren Instanzen** verhält (jede Instanz hat ihren
+eigenen Cache, Dokploy/Docker ohne gemeinsamen `cacheHandler`) — dann fällt die Arbeit einmal pro
+Instanz an, sonst ändert sich nichts.
+
 ## Gegenprüfen
 
 ```js
@@ -202,4 +295,5 @@ neu laden — jedes Foto muss in **seinen eigenen** Farben erscheinen, nicht in 
 | Blur speichern | `Media.ts` | Feld `blurDataURL`, `type: 'text'`, `hidden` |
 | Blur anzeigen | `ImageMedia` | `placeholder="blur"` + `blurDataURL={resource.blurDataURL}` |
 | Bestand nachrüsten | `src/scripts/backfillBlurDataURLs.ts` | `APPLY=1`, `payload.db.updateOne` + `updatedAt: null`, Thumbnail als Quelle |
+| Externe Bild-URLs (API) | `lib/<quelle>/blur.ts` | `makeBlurDataURL` auf dem Server, `unstable_cache` pro URL, Host-Allowlist, Fehler werfen statt cachen |
 | Nicht tun | — | `payload.update` im Backfill; `db.updateOne` **ohne** `updatedAt: null` (bumpt `updatedAt` → imgproxy-Cache); `where`-Filter beim Paging |
