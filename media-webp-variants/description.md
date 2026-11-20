@@ -212,6 +212,13 @@ imgproxy ohnehin neu kodiert. Wer wie rtbrick die **vorgenerierten Payload-Ableg
 ausliefert (eigener `next/image`-Loader, kein Proxy), liefert genau diese Dateien aus — dann zählt
 es voll.
 
+## Verwandt: Blur-Platzhalter
+
+Dasselbe Muster (Hook beim Upload + Skript für den Bestand, gedrosselt) für den unscharfen
+Ladeplatzhalter: [media-blur-placeholder](../media-blur-placeholder/description.md). Der Backfill
+dort schreibt mit `payload.db.updateOne`, damit `updatedAt` — der imgproxy-Cache-Buster — unberührt
+bleibt; der Reparaturlauf oben bumpt es dagegen durch `payload.update`, was hier gewollt ist.
+
 ## Verwandt: `sizes` an `next/image`
 
 Ein korrekter Variantensatz nützt wenig, wenn das `sizes`-Attribut lügt. Steht dort der übliche

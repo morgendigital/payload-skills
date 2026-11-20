@@ -438,6 +438,9 @@ alte Sitemap-Route, die eine längst gelöschte Collection referenziert:
       schnellen Feature-Bau am ehesten vergessen, weil sie nicht über den normalen
       Collection-Workflow laufen.
 - [ ] `Media.alt` auf den Stichprobenseiten gesetzt, keine leeren Alt-Texte.
+- [ ] Blur-Platzhalter: Stichprobenseite mit „Slow 3G“ laden — jedes Foto erscheint in seinen
+      eigenen Farben, nicht in einheitlichem Grau. Fehlt er bei älteren Medien, den Backfill aus
+      [media-blur-placeholder](../media-blur-placeholder/description.md) laufen lassen.
 - [ ] Falls im Projekt vorhanden: `/admin/seo-check`-Dashboard einmal durchlaufen lassen, offene
       Findings vor Go-Live abgearbeitet oder bewusst akzeptiert.
 - [ ] OG-Tags mit **Facebook Sharing Debugger** und **LinkedIn Post Inspector** gegengeprüft —

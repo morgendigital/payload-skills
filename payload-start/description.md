@@ -56,6 +56,14 @@ upload: {
 
 Die **Original-Datei** in der Media-Collection wird damit beim Upload verkleinert. Zusätzlich erzeugt **`imageSizes`** weiterhin die definierten Varianten (thumbnail, small, medium, large, xlarge, og, …).
 
+### 1.4 Blur-Platzhalter pro Foto
+
+Das Template blendet jedes Bild aus demselben grauen Platzhalter ein. Besser: ein 16-px-WebP des
+Fotos selbst, beim Upload erzeugt und im Media-Dokument gespeichert (`blurDataURL`). Hook, Feld,
+Komponente und ein Skript für Bestandsmedien: siehe
+[media-blur-placeholder](../media-blur-placeholder/description.md). **Beim Aufsetzen einbauen** —
+nachträglich muss der Bestand per Skript befüllt werden.
+
 ### Kurzüberblick (Todo 1)
 
 | Ziel                 | Wo                  | Wie                                                  |
@@ -64,6 +72,7 @@ Die **Original-Datei** in der Media-Collection wird damit beim Upload verkleiner
 | WebP (Hauptdatei)    | `Media.ts`          | `upload.formatOptions`                               |
 | WebP (**Varianten**) | `Media.ts`          | `formatOptions` **je Eintrag** in `imageSizes` ⚠️     |
 | Max. Pixelmaße       | `Media.ts`          | `resizeOptions` (Sharp, `fit: 'inside'`)             |
+| Blur-Platzhalter     | `Media.ts` + Hook   | `blurDataURL` beim Upload → [media-blur-placeholder](../media-blur-placeholder/description.md) |
 
 ## Todo 2: S3 Storage — `@payloadcms/storage-s3`
 
