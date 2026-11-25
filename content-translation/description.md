@@ -5,6 +5,9 @@ MongoDB, `localization` mit `fallback: true`, Pages mit Drafts + Autosave, **ohn
 `localizeStatus`. Übersetzt wurde ohne DeepL/Plugin: Export aller lokalisierten Felder als JSON →
 übersetzen → Review-Seite (DE | EN | IT) → Import per Local API, erst als Dry-Run.
 
+Für den Übersetzen-Button im Admin (`@payload-enchants/translator`) siehe
+[translator-plugin](../translator-plugin/description.md) — dort steckt auch eine Sicherheitslücke.
+
 Zwei Fallen, beide im Payload-Code nachgeprüft (Pfade unten beziehen sich auf
 `node_modules/payload/dist`, Version 3.90.2). Beide fallen im Dry-Run und beim Speichern als Draft
 **nicht** auf — erst beim Veröffentlichen.

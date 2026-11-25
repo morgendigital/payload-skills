@@ -1,0 +1,68 @@
+diff --git a/dist/translate/findEntityWithConfig.js b/dist/translate/findEntityWithConfig.js
+index 2aad7734a9932c83593fe813577c0dabc3be7093..b3aa5852606b0daac1dae927ee47edb51d679b1e 100644
+--- a/dist/translate/findEntityWithConfig.js
++++ b/dist/translate/findEntityWithConfig.js
+@@ -11,6 +11,7 @@ export const findEntityWithConfig = async (args)=>{
+     if (!entityConfig) throw new APIError('Bad Request', 400);
+     const docPromise = isGlobal ? payload.findGlobal({
+         depth: 0,
++        draft: true,
+         fallbackLocale: undefined,
+         locale: locale,
+         overrideAccess,
+@@ -19,6 +20,7 @@ export const findEntityWithConfig = async (args)=>{
+     }) : payload.findByID({
+         collection: collectionSlug,
+         depth: 0,
++        draft: true,
+         fallbackLocale: undefined,
+         id: id,
+         locale: locale,
+diff --git a/dist/translate/operation.js b/dist/translate/operation.js
+index a04db3b2157d6a3dd8eb2613f175a3e7e331a2a1..9d1bdc46f8a03ab41a95451393f5705380bc01d6 100644
+--- a/dist/translate/operation.js
++++ b/dist/translate/operation.js
+@@ -13,6 +13,7 @@ export const translateOperation = async (args)=>{
+         globalSlug,
+         id,
+         locale: localeFrom,
++        overrideAccess,
+         req
+     });
+     const resolver = (req.payload.config.custom?.translator?.resolvers ?? []).find((each)=>each.key === args.resolver);
+diff --git a/dist/translate/traverseFields.js b/dist/translate/traverseFields.js
+index 2d028f14e2032bb37891a2e491cf0480c26cb372..9c7421c3ba008e8bf2a3436dd9ca3251b02aafa4 100644
+--- a/dist/translate/traverseFields.js
++++ b/dist/translate/traverseFields.js
+@@ -13,6 +13,7 @@ export const traverseFields = ({ dataFrom, emptyOnly, fields, localizedParent, s
+                     const tabDataFrom = hasName ? siblingDataFrom[tab.name] : siblingDataFrom;
+                     if (!tabDataFrom) return;
+                     const tabDataTranslated = hasName ? siblingDataTranslated[tab.name] ?? {} : siblingDataTranslated;
++                    if (hasName) siblingDataTranslated[tab.name] = tabDataTranslated;
+                     traverseFields({
+                         dataFrom,
+                         emptyOnly,
+@@ -30,6 +31,7 @@ export const traverseFields = ({ dataFrom, emptyOnly, fields, localizedParent, s
+                     const groupDataFrom = siblingDataFrom[field.name];
+                     if (!groupDataFrom) break;
+                     const groupDataTranslated = siblingDataTranslated[field.name] ?? {};
++                    siblingDataTranslated[field.name] = groupDataTranslated;
+                     traverseFields({
+                         dataFrom,
+                         emptyOnly,
+@@ -122,8 +124,13 @@ export const traverseFields = ({ dataFrom, emptyOnly, fields, localizedParent, s
+             case 'relationship':
+             case 'select':
+             case 'upload':
+-                siblingDataTranslated[field.name] = siblingDataFrom[field.name];
+-                break;
++                {
++                    const current = siblingDataTranslated[field.name];
++                    if (current === undefined || current === null || current === '' || Array.isArray(current) && current.length === 0) {
++                        siblingDataTranslated[field.name] = siblingDataFrom[field.name];
++                    }
++                    break;
++                }
+             case 'text':
+             case 'textarea':
+                 if (field.custom && typeof field.custom === 'object' && field.custom.translatorSkip) break;

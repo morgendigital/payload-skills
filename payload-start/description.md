@@ -519,6 +519,14 @@ Weder Payload 3.90 (`^18.20.2 || >=20.9.0`) noch Next 16 (`>=20.9.0`) brauchen 2
 
 plus `.nvmrc` auf `22`. Gefunden in frechinger beim ersten Deploy.
 
+**Ab Payload 3.94** verlangen die Payload-Pakete `^22.23.5 || ^24.22.3 || >=26.13.1`. Diesen
+Bereich **nicht** in das eigene `engines` übernehmen — Nixpacks liest dort die Node-Version
+heraus. pnpm meldet auf älterem Node nur `WARN Unsupported engine`; Install, Build, Start von
+`/admin/login` liefen in northlight auch auf Node 22.11.0 durch (2026-11-25). Die
+Node-Sicherheitsfixes bekommt man so trotzdem nicht: dafür braucht es ein Image, dessen
+Patch-Version man selbst festlegt (Dockerfile). Peer-Abhängigkeit ab 3.94: React `~19.2.9` oder
+`^19.3.1`, Next `>=16.4.5`.
+
 ### Gegenprüfen
 
 ```bash
