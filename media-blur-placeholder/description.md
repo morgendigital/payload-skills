@@ -64,10 +64,113 @@ blurDataURL={resource.blurDataURL || undefined}
 `next/image` baut daraus selbst den SVG-Blur (`feGaussianBlur`) und entfernt ihn, sobald das Foto
 geladen ist. Ohne Wert: `'empty'` — das Foto lädt über der Kartenfarbe, kein falsches Grau.
 
-> Wer den Platzhalter weicher einblenden will (Foto fadet über den
-> Blur), zeichnet den Blur selbst als Hintergrund des `<picture>` und entfernt ihn nach dem Fade —
-> Beispiel in kapferer, `src/components/Media/ImageMedia/index.tsx`. Dabei **nicht** am
-> `preload`-Bild (Hero): ein bis zum Fade unsichtbares Bild zählt später als LCP.
+Das ist der Standard. Die Variante unten nur, wenn das Design ein weiches Einblenden verlangt.
+
+## Variante: Foto fadet über den Blur
+
+`next/image` tauscht den Blur hart gegen das Foto. Soll das Foto stattdessen **über** den Blur
+einblenden, zeichnet man den Blur selbst als Hintergrund des `<picture>` und blendet das `<img>` per
+`opacity` ein. Im Einsatz in kapferer (`src/components/Media/ImageMedia/index.tsx`, 2026-11-12).
+
+**Den Blur nach dem Fade entfernen — Pflicht, nicht Kosmetik.** `next/image` räumt seinen eigenen
+Blur nach dem Laden weg; den selbstgezeichneten muss man selbst wegräumen. Bleibt er hinter dem Foto
+stehen, wird sein SVG-Filter (`feGaussianBlur` über die ganze Bildfläche) **bei jedem Scrollen neu
+gezeichnet**, obwohl ihn niemand mehr sieht. In kapferer war das Scrollen auf Handys dadurch spürbar
+zäh, und die Screenshots der Vorschau liefen in einen Timeout. Deshalb entfernt kapferer den Blur,
+sobald das Foto ihn verdeckt (Commit `8e62670`).
+
+Regeln:
+
+- **Nur `fill`-Bilder.** Das `<picture>` ist dort `absolute inset-0` und deckt sich mit dem Foto
+  (`object-cover`); `background-size: cover` plus Focal Point als `background-position` schneidet den
+  Blur genauso zu wie das Foto. Bilder ohne `fill` behalten `next/image`s eigenes `placeholder="blur"`.
+- **Nicht am `preload`-Bild (Hero) faden.** Ein bis zum Fade unsichtbares Bild zählt später als
+  geladen (LCP). Der Hero bekommt den Blur als Hintergrund, aber kein Fade; der Blur verschwindet
+  direkt beim `onLoad`.
+- **Kein Blur und kein Fade bei SVG.** Der Hook speichert für SVGs ohnehin `null`; die Komponente
+  prüft es trotzdem, weil `blurDataURL` auch über `src` (statische Importe) hereinkommen kann.
+- **Fade nur mit JavaScript.** Das `opacity: 0` steht in `@media (scripting: enabled)` — ohne JS
+  bliebe das Foto sonst für immer unsichtbar.
+- **Entfernen etwas nach dem Fade**, nicht gleichzeitig: 450 ms Transition, 500 ms Timer. Wer die
+  Transition ändert, ändert den Timer mit.
+
+**CSS** (`globals.css`, außerhalb von `@layer`):
+
+```css
+@media (scripting: enabled) {
+  img[data-fade] {
+    transition: opacity 450ms ease;
+  }
+  img[data-fade][data-loaded='false'] {
+    opacity: 0;
+  }
+}
+```
+
+**Komponente** — die relevanten Teile aus `ImageMedia` (`'use client'`):
+
+```tsx
+import React, { useEffect, useState } from 'react'
+
+/**
+ * Derselbe SVG-Filter wie next/image (`next/dist/shared/lib/image-blur-svg`). Die viewBox hat das
+ * Seitenverhältnis des Fotos, damit `background-size: cover` exakt wie `object-cover` zuschneidet.
+ */
+const blurBackground = (blurDataURL: string, width: number, height: number) => {
+  const scale = 640 / Math.max(width, height)
+  const w = Math.round(width * scale)
+  const h = Math.round(height * scale)
+  return `url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 ${w} ${h}'%3E%3Cfilter id='b' color-interpolation-filters='sRGB'%3E%3CfeGaussianBlur stdDeviation='20'/%3E%3CfeColorMatrix values='1 0 0 0 0 0 1 0 0 0 0 0 1 0 0 0 0 0 100 -1' result='s'/%3E%3CfeFlood x='0' y='0' width='100%25' height='100%25'/%3E%3CfeComposite operator='out' in='s'/%3E%3CfeComposite in2='SourceGraphic'/%3E%3CfeGaussianBlur stdDeviation='20'/%3E%3C/filter%3E%3Cimage width='100%25' height='100%25' x='0' y='0' preserveAspectRatio='none' style='filter: url(%23b);' href='${blurDataURL}'/%3E%3C/svg%3E")`
+}
+
+// … im Komponentenrumpf, nachdem width/height/blurDataURL/isSvg/objectPosition aus `resource`
+// gelesen sind:
+
+const [loaded, setLoaded] = useState(false)
+const [blurDone, setBlurDone] = useState(false)
+if (isSvg) blurDataURL = undefined
+const blurBehind = fill && blurDataURL && width && height
+const fade = fill && !preload && !isSvg
+
+// Nach dem 450-ms-Fade (globals.css `img[data-fade]`) den Blur entfernen.
+useEffect(() => {
+  if (!loaded) return
+  const timer = window.setTimeout(() => setBlurDone(true), 500)
+  return () => window.clearTimeout(timer)
+}, [loaded])
+
+return (
+  <picture
+    className={cn(fill && 'absolute inset-0', pictureClassName)}
+    style={
+      blurBehind && !blurDone
+        ? {
+            backgroundImage: blurBackground(blurDataURL!, width, height),
+            backgroundPosition: objectPosition ?? '50% 50%',
+            backgroundRepeat: 'no-repeat',
+            backgroundSize: 'cover',
+          }
+        : undefined
+    }
+  >
+    <NextImage
+      // Blur hinter dem Bild → next/image-Blur aus, sonst doppelt.
+      placeholder={blurDataURL && !blurBehind ? 'blur' : 'empty'}
+      blurDataURL={blurDataURL && !blurBehind ? blurDataURL : undefined}
+      data-fade={fade ? '' : undefined}
+      data-loaded={fade ? String(loaded) : undefined}
+      // Fade-Bilder: erst faden, dann (Timer) Blur weg. Hero: Blur sofort weg.
+      // next/image ruft onLoad auch für Bilder auf, die vor der Hydration fertig geladen waren.
+      onLoad={blurBehind || fade ? () => (fade ? setLoaded(true) : setBlurDone(true)) : undefined}
+      // … alt, fill, loader, preload, sizes, src, style …
+    />
+  </picture>
+)
+```
+
+**Gegenprüfen:** In den DevTools nach dem Laden ein Foto auswählen — das `<picture>` darf **kein**
+`background-image` mehr tragen. Chrome → Rendering → „Paint flashing“ an und scrollen: über fertig
+geladenen Fotos darf nichts grün aufblitzen.
 
 ## Was der Hook entscheidet
 
@@ -165,8 +268,8 @@ liegt innerhalb von 25 Byte.** Bei echten Fotos mit mehr Detail sind es eher 100
 dort verschiebt Tuning nur Zehner. Es lohnt nicht, das gegen sichtbare Unschärfeartefakte
 einzutauschen — 16 px / 60 bleibt.
 
-Der größere Posten ist der **SVG-Wrapper** an der Anzeigestelle: in der selbstgezeichneten Variante
-(Foto fadet über den Blur) rund 600 Zeichen Filter-Markup pro Bild, doppelt so viel wie der Blur
+Der größere Posten ist der **SVG-Wrapper** an der Anzeigestelle: in der
+[selbstgezeichneten Variante](#variante-foto-fadet-über-den-blur) (Foto fadet über den Blur) rund 600 Zeichen Filter-Markup pro Bild, doppelt so viel wie der Blur
 selbst. Wer `next/image`s eigenes `placeholder="blur"` nutzt, hat dieses Markup ebenfalls im
 Inline-Style. Bei 10–20 Bildern pro Seite ist das im Rauschen; bei Seiten mit hunderten Bildern fällt es
 ins Gewicht (nicht gemessen).
@@ -294,6 +397,7 @@ neu laden — jedes Foto muss in **seinen eigenen** Farben erscheinen, nicht in 
 | Blur erzeugen | `hooks/generateBlurDataURL.ts` | `beforeChange` auf `media`, `req.file.data` → sharp 16 px WebP |
 | Blur speichern | `Media.ts` | Feld `blurDataURL`, `type: 'text'`, `hidden` |
 | Blur anzeigen | `ImageMedia` | `placeholder="blur"` + `blurDataURL={resource.blurDataURL}` |
+| Foto fadet über Blur (optional) | `ImageMedia` + `globals.css` | Blur als `<picture>`-Hintergrund, `img[data-fade]`, Blur 500 ms nach `onLoad` entfernen; Hero ohne Fade |
 | Bestand nachrüsten | `src/scripts/backfillBlurDataURLs.ts` | `APPLY=1`, `payload.db.updateOne` + `updatedAt: null`, Thumbnail als Quelle |
 | Externe Bild-URLs (API) | `lib/<quelle>/blur.ts` | `makeBlurDataURL` auf dem Server, `unstable_cache` pro URL, Host-Allowlist, Fehler werfen statt cachen |
-| Nicht tun | — | `payload.update` im Backfill; `db.updateOne` **ohne** `updatedAt: null` (bumpt `updatedAt` → imgproxy-Cache); `where`-Filter beim Paging |
+| Nicht tun | — | `payload.update` im Backfill; `db.updateOne` **ohne** `updatedAt: null` (bumpt `updatedAt` → imgproxy-Cache); `where`-Filter beim Paging; selbstgezeichneten Blur nach dem Fade stehen lassen (Repaint bei jedem Scrollen) |
